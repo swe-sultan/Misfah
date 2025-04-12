@@ -1,0 +1,23 @@
+Misfah-Extension-dummy/
+├── api/
+│   └── text-analysis-api.js
+├── data/
+│   ├── flat_sensitive_classes.json
+│   ├── imagenet_labels.json
+│   └── sensitive_classes.json
+├── icons/
+├── js/
+│   └── model-loader.js
+├── lib/
+│   └── tensorflow.min.js
+├── model/
+│   ├── model.json
+│   ├── group1-shard1of25.bin
+│   ├── ...
+├── content.js
+├── background.js (moved from workers/ to root)
+├── offscreen.html
+├── offscreen.js
+├── popup.html
+├── popup.js
+└── styles.css

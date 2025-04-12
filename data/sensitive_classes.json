@@ -1,0 +1,27 @@
+{
+  "alcohol": {
+    "907": "wine bottle",
+    "927": "wine glass",
+    "966": "red wine",
+    "440": "beer bottle",
+    "441": "beer glass"
+  },
+  "gambling": {
+    "800": "slot machine"
+  },
+  "violence": {
+    "596": "hatchet",
+    "763": "revolver",
+    "413": "assault rifle",
+    "764": "rifle",
+    "499": "cleaver"
+  },
+  "polytheism": {
+    "863": "totem pole",
+    "497": "church",
+    "663": "monastery",
+    "442": "bell cote",
+    "406": "altar",
+    "887": "vestment"
+  }
+}

@@ -1,0 +1,437 @@
+/* Import Arabic font */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@100;200;300;400;500;600;700&display=swap');
+
+/* Apply font globally */
+* {
+  font-family: 'IBM Plex Sans Arabic', Arial, sans-serif; /* Apply globally to all elements */
+  box-sizing: border-box; /* Ensure consistent sizing across elements */
+}
+
+/* General Styling */
+body {
+  margin: 0;
+  padding: 20px;
+  background-color: #1b1b2f; /* Dark blue-black background */
+  color: #e0e6ed; /* Light blue-gray text color */
+  width: 300px;
+  min-height: 200px;
+  text-align: right; /* Align for Arabic text */
+  direction: rtl; /* Right-to-left layout */
+}
+
+/* Container */
+.popup-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+}
+
+/* Title */
+.title {
+  font-size: 20px;
+  font-weight: bold;
+  color: #4fa3f7; /* Bright blue color for the title */
+  margin: 0;
+  text-align: center;
+}
+
+/* Label */
+.label {
+  font-size: 14px;
+  color: #aab2c5; /* Soft gray-blue for labels */
+  align-self: flex-start;
+}
+
+/* Textarea */
+.textarea {
+  width: 100%;
+  height: 80px;
+  padding: 10px;
+  border: 1px solid #4fa3f7; /* Bright blue border */
+  border-radius: 4px;
+  resize: none;
+  font-size: 14px;
+  color: #e0e6ed; /* Text inside textarea */
+  background-color: #22293d; /* Dark blue background for input */
+  text-align: right;
+  direction: rtl;
+}
+
+/* Buttons */
+.button {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  color: #fff;
+  background-color: #4fa3f7; /* Bright blue for buttons */
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.button:hover {
+  background-color: #3a8dcf; /* Slightly darker blue on hover */
+  transform: scale(1.03); /* Subtle scale effect */
+}
+
+.button.secondary {
+  background-color: #1f4068; /* Deep blue for secondary buttons */
+}
+
+.button.secondary:hover {
+  background-color: #173753; /* Darker blue on hover */
+}
+
+/* Divider */
+.divider {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid #4fa3f7; /* Bright blue divider */
+  margin: 10px 0;
+}
+
+/* Icon in the corner */
+.corner-icon {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 40px; /* Adjust size as needed */
+  height: 40px;
+  border-radius: 50%; /* Make it circular */
+  background-color: #22293d; /* Optional: Add a background to match the theme */
+  padding: 5px; /* Add padding inside the background */
+}
+
+/* Custom Alert Box */
+.custom-alert {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: #ff4d4d; /* Red background */
+  color: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  text-align: center;
+  display: none; /* Hidden by default */
+  width: 80%;
+  max-width: 300px;
+}
+
+.custom-alert p {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.button.close-alert {
+  background-color: white;
+  color: #ff4d4d;
+  border: 1px solid white;
+  padding: 5px 10px;
+  font-size: 14px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.button.close-alert:hover {
+  background-color: #ff8080;
+  color: white;
+}
+
+/* Toggle Switch */
+.toggle-container {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 15px;
+}
+
+.toggle-label {
+  color: #e0e6ed;
+  font-size: 14px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 34px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #1f4068;
+  transition: .4s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 26px;
+  width: 26px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+}
+
+input:checked + .slider {
+  background-color: #4fa3f7;
+}
+
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+
+.slider.round {
+  border-radius: 34px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
+}
+
+/* Modal styles */
+.modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: #22293d;
+  color: #e0e6ed;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  width: 80%;
+  max-width: 300px;
+  display: none; /* Initially hidden */
+}
+
+.hidden {
+  display: none;
+}
+
+/* Close modal button */
+#close-modal {
+  margin-top: 10px;
+  background-color: #1f4068;
+}
+
+#close-modal:hover {
+  background-color: #173753;
+}
+
+/* App Icon Styling */
+.app-icon {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 40px; /* Adjust the size of the icon */
+  height: 40px;
+  border-radius: 50%; /* Optional: Make the icon circular */
+  background-color: transparent; /* Match the theme */
+}
+
+/* Statistics Container */
+.stats-container {
+  margin-top: 20px;
+  text-align: right;
+  direction: rtl;
+  width: 100%;
+}
+
+/* Individual Stat Items */
+.stat-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.stat-icon {
+  width: 24px;
+  height: 24px;
+  margin-left: 10px;
+}
+
+/* Model status indicator */
+.model-status {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background-color: #22293d;
+  border-radius: 4px;
+  margin-bottom: 5px;
+}
+
+.status-label {
+  font-size: 14px;
+  color: #aab2c5;
+}
+
+.status-indicator {
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.status-loading {
+  color: #f0ad4e; /* Amber/yellow for loading */
+}
+
+.status-ready {
+  color: #5cb85c; /* Green for ready */
+}
+
+.status-error {
+  color: #d9534f; /* Red for error */
+}
+
+/* Progress bar for model loading */
+.progress-container {
+  width: 100%;
+  background-color: #1f4068;
+  height: 8px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background-color: #4fa3f7;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+/* Threshold slider container */
+.threshold-container {
+  width: 100%;
+  margin: 15px 0;
+}
+
+.threshold-container label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.threshold-container input[type="range"] {
+  width: 100%;
+  margin-bottom: 5px;
+}
+
+/* Label styles within the modal */
+#customize-modal label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+#customize-modal input[type="checkbox"] {
+  margin-left: 8px;
+}
+
+/* Save button in modal */
+#save-preferences {
+  margin-top: 15px;
+}
+
+/* Add these styles to your styles.css file */
+
+/* API Key Container */
+.api-key-container {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #4fa3f7;
+  width: 100%;
+}
+
+.api-key-container h3 {
+  font-size: 16px;
+  color: #4fa3f7;
+  margin: 0 0 10px 0;
+}
+
+/* Input Field for API Key */
+.input-field {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #4fa3f7;
+  border-radius: 4px;
+  background-color: #22293d;
+  color: #e0e6ed;
+  font-size: 14px;
+  margin-top: 5px;
+  margin-bottom: 10px;
+  text-align: right;
+  direction: rtl;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #3a8dcf;
+  box-shadow: 0 0 0 2px rgba(79, 163, 247, 0.2);
+}
+
+.input-field::placeholder {
+  color: #6c7a94;
+}
+
+/* API Buttons Container */
+.api-buttons {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+/* Small Button Variant */
+.button.small {
+  padding: 6px 12px;
+  font-size: 12px;
+  min-width: initial;
+  width: 48%;
+}
+
+/* API Status Indicator */
+.api-status {
+  font-size: 14px;
+  text-align: center;
+  padding: 5px 8px;
+  margin-top: 8px;
+  border-radius: 4px;
+  min-height: 20px;
+}
+
+.api-status.success {
+  background-color: rgba(92, 184, 92, 0.2);
+  color: #5cb85c;
+}
+
+.api-status.error {
+  background-color: rgba(217, 83, 79, 0.2);
+  color: #d9534f;
+}
+
+.api-status.loading {
+  background-color: rgba(240, 173, 78, 0.2);
+  color: #f0ad4e;
+}

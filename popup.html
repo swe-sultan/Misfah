@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="popup-container">
+
+    <img src="icons/picture2.png" alt="App Icon" class="app-icon">
+    <h1 class="title">مصفاة</h1>
+    
+    <!-- Add Toggle Switch -->
+    <div class="toggle-container">
+      <label class="switch">
+        <input type="checkbox" id="filterToggle">
+        <span class="slider round"></span>
+      </label>
+      <span class="toggle-label">تفعيل الفلتر</span>
+    </div>
+    
+    <button id="customize-options" class="button">تخصيص الاختيارات</button>
+
+    <!-- Model status indicator -->
+    <div class="model-status">
+      <span class="status-label">حالة نموذج تحليل الصور:</span>
+      <span id="model-status-indicator" class="status-indicator status-loading">جاري التحميل...</span>
+    </div>
+    
+    <!-- Model loading progress bar -->
+    <div class="progress-container">
+      <div id="model-progress-bar" class="progress-bar" style="width: 0%"></div>
+    </div>
+
+    <!-- Customization modal -->
+    <div id="customize-modal" class="modal hidden">
+      <h2 class="title">تخصيص الاختيارات</h2>
+      <label><input type="checkbox" value="polytheism" checked /> شركيات</label>
+      <label><input type="checkbox" value="violence" checked /> عنف</label>
+      <label><input type="checkbox" value="gambling" checked /> قمار</label>
+      <label><input type="checkbox" value="alcohol" checked /> مسكرات</label>
+      
+      <!-- Model sensitivity threshold -->
+      <div class="threshold-container">
+        <label>حساسية تحليل الصور:</label>
+        <input type="range" id="threshold-slider" min="0.05" max="0.9" step="0.05" value="0.15">
+        <span id="threshold-value">0.15</span>
+      </div>
+      <!-- Add this section to your popup.html inside the customize-modal div, right after the threshold container -->
+<div class="api-key-container">
+  <h3>واجهة برمجة تحليل النصوص (Claude API)</h3>
+  <label for="api-key">مفتاح API:</label>
+  <input type="password" id="api-key" class="input-field" placeholder="أدخل مفتاح Claude API">
+  <div class="api-buttons">
+    <button id="save-api-key" class="button secondary small">حفظ المفتاح</button>
+    <button id="test-api" class="button secondary small">اختبار الاتصال</button>
+    <button id="test-direct-api" class="button secondary">اختبار مباشر API</button>
+  </div>
+  <div id="api-status" class="api-status"></div>
+</div>
+      
+      
+      <button id="save-preferences" class="button">حفظ</button>
+      <button id="close-modal" class="button secondary">إغلاق</button>
+    </div>
+
+    <label class="label">:الكلمات المفتاحية</label>
+    <textarea id="keywords" class="textarea"></textarea>
+    <button id="save" class="button">حفظ الكلمات المفتاحية</button>
+    <hr class="divider">
+    <button id="test-alert" class="button secondary">اختبار التنبيه</button>
+    <!-- Add this button before the stats-container div in popup.html -->
+    <button id="test-loader" class="button secondary">اختبار تحميل المحتوى</button>    <div class="stats-container">
+      <h2 class="title">الإحصائيات</h2>
+      <div class="stat-item">
+        <img src="icons/x.png" alt="X Icon" class="stat-icon">
+        <span id="twitter-stats">عدد التغريدات المحجوبة: 0</span>
+      </div>
+      <div class="stat-item">
+        <img src="icons/threads.png" alt="Threads Icon" class="stat-icon">
+        <span id="threads-stats">عدد المنشورات المحجوبة: 0</span>
+      </div>
+    </div>
+    
+    <div id="custom-alert" class="custom-alert">
+      <p id="custom-alert-message">رسالة التنبيه</p>
+      <button id="close-alert" class="button close-alert">إغلاق</button>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

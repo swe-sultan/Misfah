@@ -1,0 +1,104 @@
+{
+  "907": {
+    "name": "wine bottle",
+    "categories": [
+      "alcohol"
+    ]
+  },
+  "927": {
+    "name": "wine glass",
+    "categories": [
+      "alcohol"
+    ]
+  },
+  "966": {
+    "name": "red wine",
+    "categories": [
+      "alcohol"
+    ]
+  },
+  "440": {
+    "name": "beer bottle",
+    "categories": [
+      "alcohol"
+    ]
+  },
+  "441": {
+    "name": "beer glass",
+    "categories": [
+      "alcohol"
+    ]
+  },
+  "800": {
+    "name": "slot machine",
+    "categories": [
+      "gambling"
+    ]
+  },
+  "596": {
+    "name": "hatchet",
+    "categories": [
+      "violence"
+    ]
+  },
+  "763": {
+    "name": "revolver",
+    "categories": [
+      "violence"
+    ]
+  },
+  "413": {
+    "name": "assault rifle",
+    "categories": [
+      "violence"
+    ]
+  },
+  "764": {
+    "name": "rifle",
+    "categories": [
+      "violence"
+    ]
+  },
+  "499": {
+    "name": "cleaver",
+    "categories": [
+      "violence"
+    ]
+  },
+  "863": {
+    "name": "totem pole",
+    "categories": [
+      "polytheism"
+    ]
+  },
+  "497": {
+    "name": "church",
+    "categories": [
+      "polytheism"
+    ]
+  },
+  "663": {
+    "name": "monastery",
+    "categories": [
+      "polytheism"
+    ]
+  },
+  "442": {
+    "name": "bell cote",
+    "categories": [
+      "polytheism"
+    ]
+  },
+  "406": {
+    "name": "altar",
+    "categories": [
+      "polytheism"
+    ]
+  },
+  "887": {
+    "name": "vestment",
+    "categories": [
+      "polytheism"
+    ]
+  }
+}

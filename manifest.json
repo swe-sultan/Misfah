@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "Sensitive Content Filter",
+  "version": "1.0",
+  "description": "Filters sensitive content on Threads and Twitter, analyzing both text and images.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "webRequest",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://*.threads.net/*",
+    "https://*.x.com/*",
+    "https://twitter.com/*",
+    "https://*.twimg.com/*",
+    "https://*.cdninstagram.com/*",
+    "https://api.anthropic.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.threads.net/*",
+        "https://*.x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "js/model-loader.js",
+        "api/text-analysis-api.js", 
+        "content.js"
+      ],
+      "css": ["loader.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icons/Picture2.png"
+  },
+  "icons": {
+    "48": "icons/picture2.png",
+    "128": "icons/picture2.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["offscreen.html", "offscreen.js", "lib/*","data/*","js/*", "model/*", "workers/*"],
+      "matches": [
+        "https://*.twitter.com/*",
+        "https://*.x.com/*",
+        "https://*.threads.net/*"
+      ]
+    }
+  ],
+ "content_security_policy": {
+  "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+}
+}

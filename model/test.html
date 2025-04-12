@@ -1,0 +1,43 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TensorFlow.js ResNet50 Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0"></script>
+    <script>
+        async function testModel() {
+            try {
+                const model = await tf.loadLayersModel('./model.json');
+                console.log('Model loaded successfully');
+                
+                // Create a dummy tensor
+                const dummyInput = tf.zeros([1, 224, 224, 3]);
+                
+                // Run prediction
+                const result = model.predict(dummyInput);
+                
+                // Get top prediction
+                const values = await result.data();
+                const indices = Array.from(Array(values.length).keys());
+                indices.sort((a, b) => values[b] - values[a]);
+                
+                document.getElementById('result').textContent = 
+                    `Top class: ${indices[0]} with confidence ${values[indices[0]].toFixed(4)}`;
+                
+                // Clean up
+                dummyInput.dispose();
+                result.dispose();
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('result').textContent = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>TensorFlow.js ResNet50 Test</h1>
+    <button onclick="testModel()">Test Model</button>
+    <div id="result"></div>
+</body>
+</html>
+            
