@@ -36,9 +36,36 @@ const categoryKeywords = {
   alcohol: ["alcohol", "drinks", "liquor"],
 };
 
+// Define the safe categories - content in these categories should not be hidden
+const SAFE_CATEGORIES = [
+  "safe",
+  "Text from Quran",
+  "Quran text", // Alternative naming
+  "Islam",
+  "economy",
+  "science"
+];
+
+// Helper function to check if a category is considered safe (should not be hidden)
+function isSafeCategory(category) {
+  return SAFE_CATEGORIES.includes(category);
+}
+
+// Function to determine if content should be hidden based on its category
+function shouldHideContent(textCategory, userPreferences) {
+  // If the text analysis API module is available, use its function
+  if (window.textAnalysisAPI && typeof window.textAnalysisAPI.isSafeCategory === 'function') {
+    return !window.textAnalysisAPI.isSafeCategory(textCategory);
+  }
+  
+  // Fallback if the API module isn't available or function doesn't exist
+  return !isSafeCategory(textCategory);
+}
+
 let twitterFilteredCount = 0;
 let threadsFilteredCount = 0;
 let processedPosts = new Set(); // Track already processed posts
+let hiddenPosts = new Set(); // Track posts that have been hidden to avoid reprocessing
 let lastAlertTime = 0; // Track the last time we showed an alert
 let modelStatusChecks = 0;
 const MAX_MODEL_STATUS_CHECKS = 90; // 90 checks = 90 seconds (with 1 second interval)
@@ -53,6 +80,7 @@ function setupDebugInterface() {
   window.misfah.forceReprocess = forceReprocessAllContent;
   window.misfah.getStats = () => ({
     processedPosts: processedPosts.size,
+    hiddenPosts: hiddenPosts.size,
     twitterResults: Object.keys(twitterTextResults).length,
     threadsResults: Object.keys(threadsTextResults).length,
     twitterFiltered: twitterFilteredCount,
@@ -84,13 +112,14 @@ function throttledStorageSave(data) {
   }
 }
 
-// Add a debug function to force reprocessing of all visible content
+// Add a debug function to force reprocessing of all content
 function forceReprocessAllContent() {
   debugLog("Manual reprocessing of all content triggered");
   console.log("🔄 Misfah: Forcing reprocessing of all content");
   
   // Clear all tracking data
   processedPosts = new Set();
+  hiddenPosts = new Set();
   twitterTextResults = {};
   threadsTextResults = {};
   
@@ -169,6 +198,7 @@ window.misfah = {
   forceReprocess: forceReprocessAllContent,
   getStats: () => ({
     processedPosts: processedPosts.size,
+    hiddenPosts: hiddenPosts.size,
     twitterResults: Object.keys(twitterTextResults).length,
     threadsResults: Object.keys(threadsTextResults).length,
     twitterFiltered: twitterFilteredCount,
@@ -346,9 +376,14 @@ function getPostId(post) {
 }
 
 // Helper function to check if a post has already been processed by Misfah
-// Simplified check function
+// Improved check function to prevent infinite loops
 function isPostProcessedByMisfah(post) {
-  // Just check processedPosts Set first
+  // Check hiddenPosts set first to avoid reprocessing already hidden posts
+  if (hiddenPosts.has(post)) {
+    return true;
+  }
+  
+  // Then check processedPosts Set
   if (processedPosts.has(post)) {
     return true;
   }
@@ -376,9 +411,13 @@ async function batchAnalyzePostsText() {
     debugLog("Starting batch text analysis with Claude API");
     const { twitterPosts, threadsPosts } = getPosts();
     
-    // Get unprocessed posts
-    const unprocessedTwitterPosts = Array.from(twitterPosts).filter(post => !isPostProcessedByMisfah(post));
-    const unprocessedThreadsPosts = Array.from(threadsPosts).filter(post => !isPostProcessedByMisfah(post));
+    // Get unprocessed posts - improved to also check hiddenPosts set
+    const unprocessedTwitterPosts = Array.from(twitterPosts).filter(post => 
+      !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
+    );
+    const unprocessedThreadsPosts = Array.from(threadsPosts).filter(post => 
+      !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
+    );
     
     debugLog(`Found ${unprocessedTwitterPosts.length} unprocessed Twitter posts and ${unprocessedThreadsPosts.length} unprocessed Threads posts`);
     console.log(`Running batch text analysis: ${unprocessedTwitterPosts.length} Twitter posts, ${unprocessedThreadsPosts.length} Threads posts`);
@@ -392,6 +431,7 @@ async function batchAnalyzePostsText() {
           misfahContentViewed: post.dataset.misfahContentViewed,
           misfahProcessed: post.dataset.misfahProcessed,
           inProcessedSet: processedPosts.has(post),
+          inHiddenSet: hiddenPosts.has(post),
           firstTextChars: post.innerText.substring(0, 30)
         });
       });
@@ -483,12 +523,6 @@ function analyzeTextWithKeywords(text) {
 
 // Improved image processing with better error handling and logging
 async function processImageWithModel(img) {
-  // Check if filtering is disabled
-  if (!isEnabled) {
-    console.log("Image processing skipped - filtering is disabled");
-    return { is_sensitive: false, reason: "filtering_disabled" };
-  }
-  
   try {
     debugLog("Processing image through background script:", img.src ? img.src.substring(0, 100) + "..." : "no src");
     console.log("Processing image:", img.width, "x", img.height, "src:", img.src ? img.src.substring(0, 50) + "..." : "no src");
@@ -544,12 +578,6 @@ async function processImageWithModel(img) {
       return { is_sensitive: false, reason: "image_data_unavailable" };
     }
     
-    // Check again if filtering was disabled during fetching
-    if (!isEnabled) {
-      console.log("Image processing canceled - filtering was disabled during fetch");
-      return { is_sensitive: false, reason: "filtering_disabled" };
-    }
-    
     // Send to background for processing with the real model
     debugLog("Sending image to background for processing");
     try {
@@ -585,12 +613,6 @@ async function processImageWithModel(img) {
         );
       });
       
-      // One final check before returning result
-      if (!isEnabled) {
-        console.log("Image processing result discarded - filtering disabled before completion");
-        return { is_sensitive: false, reason: "filtering_disabled" };
-      }
-      
       return result;
     } catch (processingError) {
       debugLog("Error processing image with background model:", processingError.message);
@@ -601,6 +623,7 @@ async function processImageWithModel(img) {
     return { is_sensitive: false, error: error.message || "Unknown error" };
   }
 }
+
 // ==========================================
 // CONTENT FILTERING MAIN FUNCTIONS
 // ==========================================
@@ -613,8 +636,12 @@ async function runFilterContent() {
   
   // Show loader only if there are enough unprocessed posts
   const { twitterPosts, threadsPosts } = getPosts();
-  const unprocessedTwitterPosts = Array.from(twitterPosts).filter(post => !isPostProcessedByMisfah(post));
-  const unprocessedThreadsPosts = Array.from(threadsPosts).filter(post => !isPostProcessedByMisfah(post));
+  const unprocessedTwitterPosts = Array.from(twitterPosts).filter(post => 
+    !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
+  );
+  const unprocessedThreadsPosts = Array.from(threadsPosts).filter(post => 
+    !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
+  );
   const totalUnprocessed = unprocessedTwitterPosts.length + unprocessedThreadsPosts.length;
   
   console.log(`Found ${totalUnprocessed} unprocessed posts`);
@@ -653,8 +680,8 @@ async function filterContent() {
 
   // Filter Twitter posts
   for (const post of twitterPosts) {
-    // Skip already processed posts
-    if (processedPosts.has(post)) {
+    // Skip already processed posts - improved check
+    if (isPostProcessedByMisfah(post) || hiddenPosts.has(post)) {
       console.log("Skipping already processed post");
       continue;
     }
@@ -675,7 +702,8 @@ async function filterContent() {
       console.log(`Tweet ${postId} text category:`, textCategory);
       
       // Initialize variables
-      let shouldHide = textCategory !== 'safe';
+      // Use the updated function to check if content should be hidden
+      let shouldHide = shouldHideContent(textCategory, preferences);
       let sensitiveCategories = shouldHide ? [textCategory] : [];
       let imageResult = null;
 
@@ -758,6 +786,9 @@ async function filterContent() {
         // Replace with placeholder instead of hiding
         createFilteredPostPlaceholder(post, sensitiveCategories, originalContent);
         
+        // Add to hidden posts set to prevent reprocessing
+        hiddenPosts.add(post);
+        
         twitterFilteredCount++;
         filteredCount++;
         
@@ -780,8 +811,8 @@ async function filterContent() {
 
   // Filter Threads posts with a similar approach
   for (const post of threadsPosts) {
-    // Skip already processed posts
-    if (processedPosts.has(post) || isPostProcessedByMisfah(post)) {
+    // Skip already processed posts - improved check
+    if (isPostProcessedByMisfah(post) || hiddenPosts.has(post)) {
       console.log("Skipping already processed Threads post");
       continue;
     }
@@ -801,7 +832,8 @@ async function filterContent() {
       console.log(`Threads post ${postId} text category:`, textCategory);
       
       // Initialize variables
-      let shouldHide = textCategory !== 'safe';
+      // Use the updated function to check if content should be hidden
+      let shouldHide = shouldHideContent(textCategory, preferences);
       let sensitiveCategories = shouldHide ? [textCategory] : [];
       let imageResult = null;
 
@@ -882,6 +914,9 @@ async function filterContent() {
         
         // Replace with placeholder instead of hiding
         createFilteredPostPlaceholder(post, sensitiveCategories, originalContent);
+        
+        // Add to hidden posts set to prevent reprocessing
+        hiddenPosts.add(post);
         
         threadsFilteredCount++;
         filteredCount++;
@@ -1437,6 +1472,8 @@ function resetProcessedPostsTracking(mutations) {
   // If we see several new nodes, likely new tweets loaded
   if (significantAdditions > 5) {
     debugLog(`Detected ${significantAdditions} new nodes - resetting processed posts tracking`);
+    
+    // Only reset processedPosts, but keep hiddenPosts to prevent infinite reprocessing
     processedPosts = new Set();
     return true;
   }
@@ -1495,6 +1532,7 @@ function setupURLChangeMonitoring() {
       
       // Reset all tracking
       processedPosts = new Set();
+      hiddenPosts = new Set(); // Reset hidden posts on URL change
       twitterTextResults = {};
       threadsTextResults = {};
       
@@ -1523,6 +1561,7 @@ function setupURLChangeMonitoring() {
       // Reset all tracking after a slight delay to ensure navigation completes
       setTimeout(() => {
         processedPosts = new Set();
+        hiddenPosts = new Set(); // Reset hidden posts on navigation
         twitterTextResults = {};
         threadsTextResults = {};
         

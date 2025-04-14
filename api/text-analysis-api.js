@@ -24,6 +24,16 @@ window.textAnalysisAPI = (function() {
   
   // Normalize the whitelist for more efficient comparison
   const NORMALIZED_WHITE_LIST = WHITE_LIST.map(normalizeArabic);
+
+  // Define safe categories - these will not be hidden
+  const SAFE_CATEGORIES = [
+    "safe",
+    "Text from Quran",
+    "Quran text", // Alternative naming
+    "Islam",
+    "economy",
+    "science"
+  ];
   
   /**
    * Normalize Arabic text by removing diacritical marks (harakat)
@@ -77,6 +87,15 @@ window.textAnalysisAPI = (function() {
     }
     
     return false;
+  }
+  
+  /**
+   * Check if a category is considered safe (content should not be hidden)
+   * @param {string} category - The category to check
+   * @returns {boolean} True if the category is considered safe
+   */
+  function isSafeCategory(category) {
+    return SAFE_CATEGORIES.includes(category);
   }
   
   /**
@@ -180,7 +199,8 @@ window.textAnalysisAPI = (function() {
     return {
       apiResults: allApiResults,
       finalResults: allFinalResults,
-      overrides: allOverrides
+      overrides: allOverrides,
+      safeCategories: SAFE_CATEGORIES
     };
   }
   
@@ -248,6 +268,15 @@ window.textAnalysisAPI = (function() {
   }
   
   /**
+   * Check if a category should be filtered/hidden
+   * @param {string} category - The category to check
+   * @returns {boolean} True if the category should be hidden
+   */
+  function shouldFilterCategory(category) {
+    return !isSafeCategory(category);
+  }
+  
+  /**
    * Load API key from Chrome storage
    * @returns {Promise<string|null>} The loaded API key or null
    */
@@ -290,7 +319,10 @@ window.textAnalysisAPI = (function() {
     setApiKey,
     saveApiKey,
     textContainsWhitelistPhrase,
-    normalizeArabic
+    normalizeArabic,
+    isSafeCategory,
+    shouldFilterCategory,
+    getSafeCategories: () => [...SAFE_CATEGORIES]
   };
 })();
 

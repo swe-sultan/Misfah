@@ -180,11 +180,12 @@ async function claudeTestConnection(apiKey) {
   }
 }
 
+// Keep most of the existing background.js code, but update the Claude API integration part
+
 // Claude API classification function
 async function classifyWithApi(texts, apiKey) {
   console.log(`[Background] Classifying ${texts.length} texts with Claude API using model claude-3-5-haiku-20241022`);
   console.log(`[Background] API Key used: ${apiKey.substring(0, 15)}...`); // Only log first part for security
-  console.log(`[Background] Classifying ${texts.length} texts with Claude API`);
   
   if (!apiKey) {
     console.error("[Background] API key not provided");
@@ -197,22 +198,24 @@ async function classifyWithApi(texts, apiKey) {
     "x-api-key": apiKey,
     "anthropic-version": "2023-06-01",
     "content-type": "application/json",
-    "anthropic-dangerous-direct-browser-access": "1" // Add this line
+    "anthropic-dangerous-direct-browser-access": "1" // Required for browser use
   };
   
-  // Create a prompt that explains the categories
-  let prompt = "Classify each of the following texts into EXACTLY ONE of these categories:\n";
-  prompt += "- safe\n";
-  prompt += "- sexual\n";
-  prompt += "- violent\n";
-  prompt += "- wine/drugs\n";
-  prompt += "- gambling\n";
-  prompt += "- ath (this include atheism from Islamic perspective, and Blasphemer (which only cover The Quran and Sunnah))\n";
-  prompt += "- Astrology\n";
-  prompt += "- Text from Quran\n";
-  prompt += "- Islam\n";
-  prompt += "- LGBTQ\n\n";
-  prompt += "Respond with a JSON array of category names only, no explanations or extra text and only accept one category as an answer.\n\n";
+  // Updated prompt to make clear which categories are safe vs. sensitive
+  let prompt = "Classify each of the following texts into EXACTLY ONE of these categories:\n"
+  prompt += "- safe (general safe content)\n"
+  prompt += "- sexual\n"
+  prompt += "- violent\n"
+  prompt += "- wine/drugs\n"
+  prompt += "- gambling\n"
+  prompt += "- atheism (this includes atheism from Islamic perspective, and blasphemy against the Quran and Sunnah)\n"
+  prompt += "- Astrology\n"
+  prompt += "- Text from Quran (direct quotes from the Quran)\n"
+  prompt += "- Islam (Islamic content that is not direct Quran quotes)\n"
+  prompt += "- economy (content about economics)\n"
+  prompt += "- science (scientific content)\n"
+  prompt += "- LGBTQ\n\n"
+  prompt += "Respond with a JSON array of category names only, no explanations or extra text and only accept one category as an answer.\n\n"
   
   // Add each text with an index
   texts.forEach((text, i) => {
@@ -280,8 +283,9 @@ async function classifyWithApi(texts, apiKey) {
             if (parts.length > 1) {
               const category = parts[1].trim().replace(/[\\"'\[\](),]/g, '');
               
-              if (["safe", "sexual", "violent", "wine/drugs", "gambling", "ath", 
-                   "Astrology", "Text from Quran", "Quran text", "Islam", "LGBTQ"].includes(category)) {
+              // Make sure we match all possible categories
+              if (["safe", "sexual", "violent", "wine/drugs", "gambling", "atheism", "Astrology", 
+                   "Text from Quran", "Quran text", "Islam", "economy", "science", "LGBTQ"].includes(category)) {
                 categories.push(category);
               }
             }
