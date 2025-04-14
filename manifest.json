@@ -30,7 +30,7 @@
         "api/text-analysis-api.js", 
         "content.js"
       ],
-      "css": ["loader.css"],
+      "css": ["loader.css", "placeholder.css"],
       "run_at": "document_idle"
     }
   ],
@@ -48,7 +48,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["offscreen.html", "offscreen.js", "lib/*","data/*","js/*", "model/*", "workers/*"],
+      "resources": ["offscreen.html", "offscreen.js", "lib/*","data/*","js/*", "model/*", "workers/*", "placeholder.css"],
       "matches": [
         "https://*.twitter.com/*",
         "https://*.x.com/*",
