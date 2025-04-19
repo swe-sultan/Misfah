@@ -1,3 +1,6 @@
+// Add this with your other variables at the top of the file
+const hiddenPostsData = {}; // Store post IDs and their categories
+
 // At the very beginning of the file
 console.log("🔴 Content script file started loading");
 
@@ -74,6 +77,25 @@ const MAX_MODEL_STATUS_CHECKS = 90; // 90 checks = 90 seconds (with 1 second int
 window.misfah = {};
 console.log("Created initial misfah object");
 
+// Load hidden post data on startup
+function loadHiddenPosts() {
+  chrome.storage.local.get(['hiddenPostsData'], (result) => {
+    if (result.hiddenPostsData && typeof result.hiddenPostsData === 'object') {
+      // Copy data from storage to our local object
+      Object.assign(hiddenPostsData, result.hiddenPostsData);
+      console.log(`Loaded ${Object.keys(hiddenPostsData).length} hidden posts with categories from storage`);
+    }
+  });
+}
+
+// Save hidden posts to persistent storage
+function persistHiddenPosts() {
+  chrome.storage.local.set({
+    hiddenPostsData: hiddenPostsData
+  });
+}
+
+
 // Then populate it later
 function setupDebugInterface() {
   console.log("Setting up debug interface");
@@ -149,6 +171,9 @@ function forceReprocessAllContent() {
 // Main initialization function - call this when the document is ready
 function initializeExtension() {
   debugLog("Initializing extension...");
+  
+  // Load saved hidden posts
+  loadHiddenPosts();
   
   // Load preferences and filter state from storage
   chrome.storage.sync.get(["preferences", "isEnabled", "twitterFilteredCount", "threadsFilteredCount", "threshold"], (data) => {
@@ -337,8 +362,11 @@ function getPosts() {
   return { twitterPosts: [], threadsPosts: [] };
 }
 
-// Find images in a post using multiple selectors
+// Find images in a post using multiple selectors - with enhanced logging
 function findImagesInPost(post) {
+  const postId = getPostId(post); // Get unique ID for this post
+  console.log(`[IMAGE FINDER] Searching for images in post ${postId}`);
+  
   // Use multiple selectors to find images
   const imageSelectors = [
     'img[src*="media"]',                 // Traditional media
@@ -354,6 +382,10 @@ function findImagesInPost(post) {
   const images = [];
   for (const selector of imageSelectors) {
     const found = post.querySelectorAll(selector);
+    if (found.length > 0) {
+      console.log(`[IMAGE FINDER] Found ${found.length} images using selector: ${selector}`);
+    }
+    
     found.forEach(img => {
       // Don't add duplicates or profile photos
       if (!images.includes(img) && 
@@ -364,11 +396,51 @@ function findImagesInPost(post) {
   }
   
   // Filter out small images
-  return images.filter(img => (img.width >= 100 && img.height >= 100));
+  const validImages = images.filter(img => (img.width >= 100 && img.height >= 100));
+  
+  console.log(`[IMAGE FINDER] Post ${postId}: Found ${images.length} total images, ${validImages.length} valid for analysis`, 
+              post.innerText ? "Text: " + post.innerText.substring(0, 30) + "..." : "[No text]");
+  
+  if (validImages.length > 0) {
+    validImages.forEach((img, index) => {
+      console.log(`[IMAGE FINDER] Valid image ${index + 1}/${validImages.length}: ${img.width}x${img.height}, src: ${img.src ? img.src.substring(0, 50) + "..." : "no src"}`);
+    });
+  }
+  
+  return validImages;
 }
 
-// Helper for post IDs
+
+// Improved getPostId function that tries to extract the actual Twitter/Threads post ID
 function getPostId(post) {
+  // Try to get the actual Tweet ID from the post's attributes or links
+  try {
+    // Check for Twitter's data-tweet-id attribute
+    const tweetIdAttr = post.getAttribute('data-tweet-id');
+    if (tweetIdAttr) return 'twitter_' + tweetIdAttr;
+    
+    // Try to find it in permalink links
+    const permalinkEl = post.querySelector('a[href*="/status/"]');
+    if (permalinkEl) {
+      const href = permalinkEl.getAttribute('href');
+      const match = href.match(/\/status\/(\d+)/);
+      if (match && match[1]) return 'twitter_' + match[1];
+    }
+    
+    // For Threads, try to extract from the article's data attributes
+    if (post.tagName === 'ARTICLE') {
+      // Look for data attributes that might contain IDs
+      for (const attr of post.getAttributeNames()) {
+        if (attr.startsWith('data-') && post.getAttribute(attr).length > 10) {
+          return 'threads_' + post.getAttribute(attr);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error getting post ID:', e);
+  }
+  
+  // Fallback to using our generated ID if we couldn't find a real one
   if (!post._postId) {
     post._postId = 'post_' + Math.random().toString(36).substr(2, 9);
   }
@@ -376,9 +448,23 @@ function getPostId(post) {
 }
 
 // Helper function to check if a post has already been processed by Misfah
-// Improved check function to prevent infinite loops
 function isPostProcessedByMisfah(post) {
-  // Check hiddenPosts set first to avoid reprocessing already hidden posts
+    // First, check if this post was explicitly shown by the user
+    if (post.dataset.misfahUserShown === "true") {
+      return true;
+    }
+  // Check if this post ID has been hidden before
+  const postId = getPostId(post);
+  if (hiddenPostsData[postId]) {
+    // If the post is in hiddenPostsData but not currently marked with a placeholder,
+    // we should re-hide it but return false so that happens
+    if (!post.dataset.hasMisfahPlaceholder) {
+      return false;
+    }
+    return true;
+  }
+  
+  // Check hiddenPosts set to avoid reprocessing already hidden posts
   if (hiddenPosts.has(post)) {
     return true;
   }
@@ -831,6 +917,11 @@ async function filterContent() {
       const textCategory = threadsTextResults[postId] || 'safe';
       console.log(`Threads post ${postId} text category:`, textCategory);
       
+      if (textCategory === "LGBTQ" || textCategory === "Astrology") {
+        console.log(`Force-hiding sensitive category: ${textCategory}`);
+        let shouldHide = true;
+        let sensitiveCategories = [textCategory];
+      }
       // Initialize variables
       // Use the updated function to check if content should be hidden
       let shouldHide = shouldHideContent(textCategory, preferences);
@@ -958,6 +1049,18 @@ async function filterContent() {
 
 // Updated function to create a placeholder for filtered content instead of hiding it
 function createFilteredPostPlaceholder(post, categories, originalContent) {
+  // Get the post ID and store it permanently with its categories
+  const postId = getPostId(post);
+  
+  // Store both the ID and categories
+  hiddenPostsData[postId] = {
+    categories: Array.isArray(categories) ? categories : [categories || 'sensitive'],
+    timestamp: Date.now()
+  };
+  
+  // Persist hidden post data to storage
+  persistHiddenPosts();
+  
   // Store the original display style
   post._originalDisplay = post.style.display;
   
@@ -966,9 +1069,12 @@ function createFilteredPostPlaceholder(post, categories, originalContent) {
   
   // Store the categories for later reference
   post._sensitiveCategories = categories;
+  post.dataset.misfahSensitiveCategories = Array.isArray(categories) ? 
+    categories.join(',') : categories || 'sensitive';
   
   // Mark this post as having a placeholder (to avoid reprocessing)
   post.dataset.hasMisfahPlaceholder = "true";
+  post.dataset.misfahPostId = postId;
   
   // Create a timestamp ID to ensure unique button IDs
   const uniqueId = Date.now() + Math.floor(Math.random() * 1000);
@@ -1000,6 +1106,29 @@ function createFilteredPostPlaceholder(post, categories, originalContent) {
   
   // Add event listener to the show button
   setTimeout(() => {
+  // Get the placeholder container
+  const placeholderContainer = post.querySelector('.misfah-placeholder');
+  
+  if (placeholderContainer) {
+    // Prevent clicks on the placeholder div from propagating to parent elements
+    // EXCEPT for clicks on the show button
+    placeholderContainer.addEventListener('click', function(event) {
+      // Check if the click was on or inside the button
+      const showButton = document.getElementById(`misfah-show-content-${uniqueId}`);
+      if (showButton && (event.target === showButton || showButton.contains(event.target))) {
+        // Allow clicks on the button to proceed normally
+        console.log("Button clicked - allowing event");
+        return true;
+      }
+      
+      // For all other elements, prevent the default action and stop propagation
+      event.stopPropagation();
+      event.preventDefault();
+      console.log("Placeholder clicked (not on button) - preventing navigation");
+      return false;
+    }, true); // Use capture phase to ensure we catch the event first
+  }
+
     const showButton = document.getElementById(`misfah-show-content-${uniqueId}`);
     if (showButton) {
       showButton.addEventListener('click', function(event) {
@@ -1007,25 +1136,73 @@ function createFilteredPostPlaceholder(post, categories, originalContent) {
         event.preventDefault();
         event.stopPropagation();
         
-        // Restore original content
-        post.innerHTML = post._originalContent;
+        console.log("Show content button clicked for post ID:", postId);
         
-        // Add a visual sensitive content indicator wrapper
-        addSensitiveContentIndicator(post, categories);
+        // Remove this ID from the hidden posts tracking
+        delete hiddenPostsData[postId];
         
-        // Mark as viewed (to prevent reprocessing)
-        post.dataset.misfahContentViewed = "true";
-        delete post.dataset.hasMisfahPlaceholder;
+        // Update the persistent storage
+        persistHiddenPosts();
         
-        console.log("Misfah: Content restored by user action but marked as sensitive");
+        // Restore original content if available
+        if (post._originalContent) {
+          console.log("Restoring original content");
+          post.innerHTML = post._originalContent;
+          
+          // Add a visual sensitive content indicator wrapper
+          addSensitiveContentIndicator(post, categories);
+          
+          // Mark as viewed to prevent reprocessing
+          processedPosts.add(post); // Add to processed set
+          post.dataset.misfahContentViewed = "true";
+          post.dataset.misfahProcessed = "true"; // Add this to prevent reprocessing
+          delete post.dataset.hasMisfahPlaceholder;
+          
+          // Mark the post with a special attribute to indicate it was explicitly shown by user
+          post.dataset.misfahUserShown = "true";
+          
+          console.log("Misfah: Content restored by user action but marked as sensitive");
+        } else {
+          // If original content isn't available, we need to unhide the post
+          // and let it reload naturally
+          console.log("No original content - removing placeholder and letting the post reload");
+          post.innerHTML = `<div style="padding: 20px; text-align: center;">جارٍ تحميل المحتوى...</div>`;
+          processedPosts.add(post);
+          post.dataset.misfahContentViewed = "true";
+          post.dataset.misfahProcessed = "true";
+          post.dataset.misfahUserShown = "true";
+          delete post.dataset.hasMisfahPlaceholder;
+          
+          // Force a reprocessing of the timeline to refresh this post
+          setTimeout(() => {
+            const postContainer = post.closest('[data-testid="cellInnerDiv"]');
+            if (postContainer) {
+              // Try to nudge Twitter to refresh this post
+              postContainer.style.opacity = "0.99";
+              setTimeout(() => postContainer.style.opacity = "1", 50);
+            }
+          }, 100);
+        }
+        
         return false;
       });
+    } else {
+      console.error("Show content button not found for ID:", uniqueId);
     }
   }, 0);
 }
 
 // Function to add a visual indicator for sensitive content that has been shown
 function addSensitiveContentIndicator(post, categories) {
+  // Get post ID to ensure we don't re-hide this post
+  const postId = getPostId(post);
+  
+  // Make sure this post stays visible by removing from tracking
+  if (hiddenPostsData[postId]) {
+    delete hiddenPostsData[postId];
+    persistHiddenPosts();
+  }
+  
   // Format categories for the warning banner
   const categoryText = Array.isArray(categories) && categories.length > 0
     ? categories.join('، ') // Arabic comma
@@ -1491,6 +1668,34 @@ function setupMutationObserver() {
   const throttledObserver = new MutationObserver((mutations) => {
     const now = Date.now();
     
+    // Check for posts that were hidden but are now visible again
+    const currentPosts = getPosts();
+    const allCurrentPosts = [...currentPosts.twitterPosts, ...currentPosts.threadsPosts];
+    
+    // Look for posts with IDs in our hiddenPostsData object
+    for (const post of allCurrentPosts) {
+      const postId = getPostId(post);
+      
+      // If this post should be hidden but isn't currently hidden
+      if (hiddenPostsData[postId] && !post.dataset.hasMisfahPlaceholder) {
+        console.log(`Post ${postId} was previously hidden but is now visible - re-hiding`);
+         // Add this condition to respect posts manually shown by the user
+        if (post.dataset.misfahUserShown === "true") {
+          console.log(`Post ${postId} was manually shown by user - not re-hiding`);
+          continue; // Skip this post
+        }
+        // Get the saved categories from our data store
+        const savedData = hiddenPostsData[postId];
+        const categories = savedData.categories || ['sensitive'];
+        
+        // Re-create the placeholder with the correct categories
+        createFilteredPostPlaceholder(post, categories, null);
+        
+        // Add to hiddenPosts set to prevent reprocessing
+        hiddenPosts.add(post);
+      }
+    }
+    
     // Check if we need to reset our processed posts tracking
     // due to significant DOM changes (like new tweets being loaded)
     const wasReset = resetProcessedPostsTracking(mutations);
@@ -1533,6 +1738,8 @@ function setupURLChangeMonitoring() {
       // Reset all tracking
       processedPosts = new Set();
       hiddenPosts = new Set(); // Reset hidden posts on URL change
+      // But do NOT reset hiddenPostsData since they're persistent across page loads
+      
       twitterTextResults = {};
       threadsTextResults = {};
       
@@ -1562,6 +1769,8 @@ function setupURLChangeMonitoring() {
       setTimeout(() => {
         processedPosts = new Set();
         hiddenPosts = new Set(); // Reset hidden posts on navigation
+        // But do NOT reset hiddenPostsData
+        
         twitterTextResults = {};
         threadsTextResults = {};
         

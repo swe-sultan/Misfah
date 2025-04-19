@@ -48,11 +48,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["offscreen.html", "offscreen.js", "lib/*","data/*","js/*", "model/*", "workers/*", "placeholder.css"],
+      "resources": ["testimage.jpg","offscreen.html", "offscreen.js", "lib/*","data/*","js/*", "model/*", "workers/*", "placeholder.css"],
       "matches": [
         "https://*.twitter.com/*",
         "https://*.x.com/*",
-        "https://*.threads.net/*"
+        "https://*.threads.net/*",
+        "<all_urls>"
       ]
     }
   ],

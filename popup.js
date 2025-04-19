@@ -52,6 +52,35 @@ function loadApiKey() {
   });
 }
 
+// Add this to your popup.js
+document.getElementById('testButton').addEventListener('click', async () => {
+  const resultDiv = document.getElementById('testResult');
+  resultDiv.textContent = "Processing test image...";
+  
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: "runImageTest",
+      imagePath: "OIP2.jpg" // Make sure this file exists in your extension
+    });
+    
+    if (response.success) {
+      const result = response.result.result;
+      resultDiv.innerHTML = `
+        <p><strong>Test Result:</strong> ${result.is_sensitive ? '⚠️ Sensitive' : '✅ Not sensitive'}</p>
+        <p><strong>Categories:</strong> ${result.detected_categories?.join(", ") || "none"}</p>
+        <p><strong>Top predictions:</strong><br>
+        ${result.top_predictions?.map(p => 
+          `- ${p.class_name}: ${(p.probability * 1).toFixed(2)}%`
+        ).join("<br>")}</p>
+      `;
+    } else {
+      resultDiv.textContent = `Error: ${response.error}`;
+    }
+  } catch (error) {
+    resultDiv.textContent = `Error: ${error.message}`;
+  }
+});
+
 // Save API key to storage
 document.getElementById("save-api-key").addEventListener("click", () => {
   const apiKey = document.getElementById("api-key").value.trim();

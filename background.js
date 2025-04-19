@@ -114,17 +114,16 @@ async function createOffscreenDocument() {
   }
 }
 
-// Improved message sending with timeout
-function sendMessageToOffscreen(message, timeoutMs = 10000) {
+function sendMessageToOffscreen(message = {}, timeoutMs = 10000) {
+  // now message is always an object
+  message.target = 'offscreen';
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       reject(new Error(`Timeout after ${timeoutMs}ms sending message to offscreen`));
     }, timeoutMs);
-    
-    message.target = 'offscreen';
+
     chrome.runtime.sendMessage(message, (response) => {
       clearTimeout(timeoutId);
-      
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
       } else if (response && response.error) {
@@ -135,6 +134,7 @@ function sendMessageToOffscreen(message, timeoutMs = 10000) {
     });
   });
 }
+
 
 // Load sensitive classes and pass to offscreen
 async function loadSensitiveClasses() {
@@ -168,6 +168,59 @@ async function claudeAnalyzeTexts(texts, apiKey) {
   // Use the same classification logic but in background script
   return classifyWithApi(texts, apiKey);
 }
+
+// Add this to your background.js file
+
+// Function to handle test image processing
+async function processTestImage(imagePath) {
+  console.log(`[BACKGROUND] 🧪 TEST: Processing local test image: ${imagePath}`);
+  
+  try {
+    // Load the test image as a data URL
+    const response = await fetch(chrome.runtime.getURL(imagePath));
+    const blob = await response.blob();
+    
+    // Convert blob to base64 data URL
+    const reader = new FileReader();
+    const dataUrl = await new Promise((resolve) => {
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+    
+    // Process the image
+    console.log(`[BACKGROUND] 🧪 TEST: Image loaded, size: ${Math.round(blob.size/1024)}KB`);
+    const result = await processImageInOffscreen(dataUrl, 0.15);
+    
+    // Log detailed results
+    console.log(`[BACKGROUND] 🧪 TEST: Results:`, result);
+    console.log(`[BACKGROUND] 🧪 TEST: Is sensitive: ${result.result.is_sensitive}`);
+    console.log(`[BACKGROUND] 🧪 TEST: Categories: ${result.result.detected_categories?.join(", ") || "none"}`);
+    console.log(`[BACKGROUND] 🧪 TEST: Top predictions:`, 
+      result.result.top_predictions?.map(p => 
+        `${p.class_name}: ${(p.probability * 100).toFixed(2)}%`
+      ).join(", "));
+    
+    return result;
+  } catch (error) {
+    console.error(`[BACKGROUND] ❌ TEST ERROR: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+// Add a message handler for the test feature
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "runImageTest") {
+    processTestImage(message.imagePath)
+      .then(result => {
+        sendResponse({ success: true, result });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep channel open for async response
+  }
+  // Other message handlers remain unchanged
+});
 
 // Function to test connection to Claude API
 async function claudeTestConnection(apiKey) {
@@ -311,24 +364,21 @@ async function classifyWithApi(texts, apiKey) {
   }
 }
 
-// Improved image processing function
+// In background.js - Enhanced logging for image processing
 async function processImageInOffscreen(imageData, threshold) {
-  // Make sure offscreen document is ready
-  if (!offscreenDocumentReady) {
-    await createOffscreenDocument();
-  }
+  console.log(`[BACKGROUND] 🖼️ Processing image with threshold: ${threshold}`);
   
-  // Process the image
   try {
     const response = await sendMessageToOffscreen({
       action: 'processImage',
       imageData: imageData,
-      threshold: threshold
-    }, 15000); // 15 second timeout for processing
+      threshold: threshold || 0.15
+    }, 15000);
     
+    console.log(`[BACKGROUND] 📊 Classification result:`, JSON.stringify(response.result));
     return response;
   } catch (error) {
-    console.error("[BACKGROUND] Error processing image in offscreen:", error);
+    console.error(`[BACKGROUND] ❌ Error processing image:`, error);
     throw error;
   }
 }
@@ -577,70 +627,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       return true;
     
-    case "fetchImage":
-      const imageUrl = message.imageUrl;
-      
-      // Validate URL
-      if (!imageUrl || typeof imageUrl !== 'string' || 
-          !(imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
-        sendResponse({ success: false, error: "Invalid image URL" });
-        return true;
-      }
-      
-      // Fetch image data
-      fetch(imageUrl, {
-        method: 'GET',
-        mode: 'cors',
-        cache: 'no-cache',
-        credentials: 'same-origin',
-        redirect: 'follow',
-        referrerPolicy: 'no-referrer'
-      })
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-          }
-          return response.blob();
-        })
-        .then(blob => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            sendResponse({ success: true, dataUrl: reader.result });
-          };
-          reader.onerror = (error) => {
-            sendResponse({ success: false, error: "Failed to convert image data" });
-          };
-          reader.readAsDataURL(blob);
-        })
-        .catch(error => {
-          // Try no-cors fallback if needed
-          if (error.message.includes("CORS")) {
-            fetch(imageUrl, {
-              method: 'GET',
-              mode: 'no-cors',
-              cache: 'no-cache',
-              credentials: 'omit',
-              redirect: 'follow',
-              referrerPolicy: 'no-referrer'
-            })
-              .then(response => response.blob())
-              .then(blob => {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  sendResponse({ success: true, dataUrl: reader.result, note: "Used no-cors mode" });
-                };
-                reader.readAsDataURL(blob);
-              })
-              .catch(err => {
-                sendResponse({ success: false, error: "Failed in both CORS and no-cors modes" });
-              });
-          } else {
+      case "fetchImage":
+        const imageUrl = message.imageUrl;
+        fetch(imageUrl, { method: 'GET', mode: 'cors' })
+          .then(response => {
+            if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+            return response.blob();
+          })
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              console.log(`[BACKGROUND] Fetched image, type: ${blob.type}, dataUrl length: ${reader.result.length}`);
+              sendResponse({ success: true, dataUrl: reader.result });
+            };
+            reader.readAsDataURL(blob);
+          })
+          .catch(error => {
+            console.error("[BACKGROUND] Fetch error:", error);
             sendResponse({ success: false, error: error.message });
-          }
-        });
-      
-      return true;
-    
+          });
+        return true;
+        
     case "getModelStatus":
       // If not ready or loaded, try to create the offscreen document
       if (!offscreenDocumentReady || (!modelStatus.isLoaded && !modelStatus.isLoading)) {

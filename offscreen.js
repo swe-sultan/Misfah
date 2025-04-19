@@ -3,7 +3,7 @@ let modelLoaded = false;
 let modelLoading = false;
 let model = null;
 let flatSensitiveClasses = {};
-let modelThreshold = 0.15;
+let modelThreshold = 0.01;
 
 // Update status display and log
 function updateStatus(message, color) {
@@ -36,9 +36,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true; // Async response
       } else {
         sendResponse({ success: true, modelStatus: { isLoaded: modelLoaded } });
+              // Add to offscreen.js initialization
+      console.log("🔍 TensorFlow.js version object:", tf.version);
+      console.log("🔍 TensorFlow backend in use:", tf.getBackend());
       }
       break;
-      
     case 'processImage':
       if (!modelLoaded || !model) {
         sendResponse({ success: false, error: 'Model not loaded' });
@@ -76,6 +78,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// In offscreen.js - Update the initializeModel function
+
 // Initialize TensorFlow and load MobileNet model
 async function initializeModel() {
   if (modelLoaded) return true;
@@ -100,21 +104,63 @@ async function initializeModel() {
       throw new Error("TensorFlow.js failed to load");
     }
     
-    console.log("🟢 [OFFSCREEN] TensorFlow.js available, version:", tf.version ? tf.version : "unknown");
+    console.log("🟢 [OFFSCREEN] TensorFlow.js available, version:", tf.version?.tfjs || "unknown");
     
-    // Set the backend explicitly
+    // 🔍 DETAILED TENSORFLOW DEBUGGING
+    console.log("🔍 TENSORFLOW DETAILS:");
+    console.log("  - TensorFlow.js version:", tf.version);
+    
+    // ✅ Use the official tf.getBackends() API instead
+    const availableBackends = typeof tf.getBackends === 'function'
+      ? tf.getBackends()
+      : [];   // or ["cpu","webgl"] if you prefer a hard‑coded fallback
+    console.log("  - Available backends:", availableBackends);
+
+    console.log("  - Available backends (via tf.getBackends()):", availableBackends);
+    console.log("  - Current backend (before setting):", tf.getBackend());
+    
+    // Try to force WebGL backend with better error handling
     try {
+      console.log("  - Attempting to set WebGL backend...");
       await tf.setBackend('webgl');
-      console.log("🟢 [OFFSCREEN] Backend set to:", tf.getBackend());
-    } catch (e) {
-      console.error("⚠️ [OFFSCREEN] WebGL backend failed, trying CPU:", e);
-      await tf.setBackend('cpu');
-      console.log("🟢 [OFFSCREEN] Backend set to:", tf.getBackend());
+      console.log("  - SUCCESS: Now using backend:", tf.getBackend());
+      
+      // Verify WebGL is working with a simple operation
+      try {
+        const testTensor = tf.zeros([1, 2, 2, 3]);
+        console.log("  - Test tensor created successfully on backend:", tf.getBackend());
+        testTensor.dispose();
+      } catch (testError) {
+        console.error("  - ERROR: Backend test failed:", testError.message);
+      }
+    } catch (webglError) {
+      console.error("  - ERROR: Failed to set WebGL backend:", webglError.message);
+      
+      // Try WebGL2 as alternative
+      try {
+        console.log("  - Attempting to set WebGL2 backend...");
+        await tf.setBackend('webgl2');
+        console.log("  - SUCCESS: Using WebGL2 backend:", tf.getBackend());
+      } catch (webgl2Error) {
+        console.error("  - ERROR: WebGL2 backend failed:", webgl2Error.message);
+        
+        // Fall back to CPU as last resort
+        try {
+          console.log("  - Falling back to CPU backend...");
+          await tf.setBackend('cpu');
+          console.log("  - Using CPU backend (fallback):", tf.getBackend());
+        } catch (cpuError) {
+          console.error("  - ERROR: CPU backend failed too:", cpuError.message);
+        }
+      }
     }
     
     // Wait for TensorFlow to be ready
     await tf.ready();
-    console.log("🟢 [OFFSCREEN] TensorFlow ready, backend:", tf.getBackend ? tf.getBackend() : "unknown");
+    console.log("🟢 [OFFSCREEN] TensorFlow ready, using backend:", tf.getBackend());
+    console.log("🔍 Backend after tf.ready():", tf.getBackend());
+    console.log("🔍 WebGL support?", tf.getBackend() === 'webgl');
+
     
     // Update progress
     chrome.runtime.sendMessage({
@@ -125,13 +171,13 @@ async function initializeModel() {
       progress: 30
     });
     
-    // Load the MobileNet model from TensorFlow Hub
-    updateStatus("Loading MobileNet model...", "blue");
+    // Load the MobileNetV2 model
+    updateStatus(`Loading MobileNetV2 model (using ${tf.getBackend()} backend)...`, "blue");
     model = await tf.loadGraphModel(
       'https://tfhub.dev/google/tfjs-model/imagenet/mobilenet_v2_100_224/classification/3/default/1',
       { fromTFHub: true }
     );
-    console.log("🟢 [OFFSCREEN] MobileNet model loaded successfully");
+    console.log("🟢 [OFFSCREEN] MobileNetV2 model loaded successfully");
     
     // Update progress
     chrome.runtime.sendMessage({
@@ -155,7 +201,7 @@ async function initializeModel() {
     modelLoading = false;
     
     // Update final status
-    updateStatus("Model loaded successfully!", "green");
+    updateStatus(`Model loaded successfully! Using ${tf.getBackend()} backend`, "green");
     chrome.runtime.sendMessage({
       action: "modelStatusUpdate",
       isLoaded: true,
@@ -183,16 +229,20 @@ async function initializeModel() {
   }
 }
 
-// Helper function to load an image
 async function loadImage(imageData) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Failed to load image"));
+    img.onload = () => {
+      console.log(`[OFFSCREEN] Image loaded: ${img.width}x${img.height}`);
+      resolve(img);
+    };
+    img.onerror = () => {
+      console.error("[OFFSCREEN] Image load failed, src length:", imageData.length);
+      reject(new Error("Failed to load image"));
+    };
     img.src = imageData;
   });
 }
-
 // Get top K predictions
 function getTopK(values, k) {
   const valuesAndIndices = Array.from(values).map((value, index) => ({value, index}));
@@ -200,97 +250,119 @@ function getTopK(values, k) {
   return valuesAndIndices.slice(0, k);
 }
 
-// Process an image
-async function processImage(imageData, threshold) {
-  if (!model || !modelLoaded) {
-    throw new Error("Model not loaded");
+async function processImage(imageData, threshold = 0.5) {
+  if (!modelLoaded || !model) {
+    console.error("[OFFSCREEN] Model not loaded");
+    return { is_sensitive: false, error: "Model not loaded" };
   }
-  
+
   try {
-    // Load the image
     const img = await loadImage(imageData);
-    console.log("🟢 [OFFSCREEN] Image loaded, dimensions:", img.width, "x", img.height);
-    
-    // Prepare the image tensor using separate operations
+    console.log(`[OFFSCREEN] Image loaded, dimensions: ${img.width}x${img.height}, data length: ${imageData.length}`);
+
     const tensor = tf.tidy(() => {
-      // Create tensor from image
-      const imageTensor = tf.browser.fromPixels(img);
-      
-      // Resize using tf.image namespace
-      const resized = tf.image.resizeBilinear(imageTensor, [224, 224]);
-      
-      // Convert to float manually
-      const normalized = tf.div(resized, tf.scalar(255)); 
-      
-      // Add batch dimension
+      const imageTensor = tf.browser.fromPixels(img, 3);
+      console.log(`[OFFSCREEN] Raw tensor shape: ${imageTensor.shape}, dtype: ${imageTensor.dtype}, min: ${tf.min(imageTensor).dataSync()[0]}, max: ${tf.max(imageTensor).dataSync()[0]}`);
+      const resized = tf.image.resizeBilinear(imageTensor, [224, 224], true);
+      console.log(`[OFFSCREEN] Resized tensor shape: ${resized.shape}`);
+      const scaled = tf.div(resized, tf.scalar(255.0));
+      console.log(`[OFFSCREEN] Scaled tensor min: ${tf.min(scaled).dataSync()[0]}, max: ${tf.max(scaled).dataSync()[0]}`);
+      const normalized = tf.mul(tf.sub(scaled, tf.scalar(0.5)), tf.scalar(2.0));
+      console.log(`[OFFSCREEN] Normalized tensor min: ${tf.min(normalized).dataSync()[0]}, max: ${tf.max(normalized).dataSync()[0]}`);
       return tf.expandDims(normalized, 0);
     });
-    
-    console.log("🟢 [OFFSCREEN] Image tensor prepared:", tensor.shape);
-    
-    // Run inference
+
     const predictions = model.predict(tensor);
     const scores = await predictions.data();
-    
-    // Rest of the function remains the same...
-    
-    console.log("🟢 [OFFSCREEN] Prediction complete");
-    
-    // Get top predictions
-    const topK = getTopK(scores, 5);
-    
-    // Map to sensitive categories
+    console.log("[OFFSCREEN] Prediction scores length:", scores.length);
+
+    const topK = getTopK(scores, 10);
+    // Apply softmax to normalize probabilities
+    const expScores = scores.map(s => Math.exp(s));
+    const sumExpScores = expScores.reduce((a, b) => a + b, 0);
+    const normalizedScores = expScores.map(s => s / sumExpScores);
+    const normalizedTopK = topK.map(pred => ({
+      index: pred.index,
+      value: normalizedScores[pred.index]
+    }));
+    const adjustedTopK = normalizedTopK.map(pred => ({
+      index: pred.index - 1,
+      value: pred.value
+    }));
+
+    console.log("[OFFSCREEN] Top 10 predictions (adjusted indices):", 
+      adjustedTopK.map(p => 
+        `Class ${p.index}: ${(p.value * 100).toFixed(2)}% ${flatSensitiveClasses[p.index]?.name || `Unknown (ID ${p.index})`}`
+      )
+    );
+
     const detectedCategories = [];
     let highestConfidence = 0;
-    
-    // Check predictions against sensitive classes
-    for (const pred of topK) {
+
+    for (const pred of adjustedTopK) {
+      if (pred.value < threshold) continue;
       const classId = pred.index.toString();
-      const confidence = pred.value;
-      
-      // Skip if below threshold
-      if (confidence < threshold) continue;
-      
-      // Track highest confidence
-      if (confidence > highestConfidence) {
-        highestConfidence = confidence;
-      }
-      
-      // Check if this class is in our sensitive classes
-      if (flatSensitiveClasses && flatSensitiveClasses[classId]) {
-        const categories = flatSensitiveClasses[classId].categories;
-        for (const category of categories) {
-          if (!detectedCategories.includes(category)) {
-            detectedCategories.push(category);
-          }
-        }
+      if (flatSensitiveClasses[classId]) {
+        flatSensitiveClasses[classId].categories.forEach(category => {
+          if (!detectedCategories.includes(category)) detectedCategories.push(category);
+        });
+        highestConfidence = Math.max(highestConfidence, pred.value);
       }
     }
-    
-    // Clean up tensors
+
     tensor.dispose();
     predictions.dispose();
-    
-    // Return results
-    const result = {
+
+    return {
       is_sensitive: detectedCategories.length > 0,
       confidence: highestConfidence,
       detected_categories: detectedCategories,
-      top_predictions: topK.slice(0, 3).map(p => ({
+      top_predictions: adjustedTopK.slice(0, 3).map(p => ({
         class_id: p.index,
         probability: p.value,
         class_name: flatSensitiveClasses[p.index]?.name || `Class ${p.index}`
       }))
     };
-    
-    console.log("🟢 [OFFSCREEN] Processing result:", result);
-    return result;
-    
   } catch (error) {
-    console.error("❌ [OFFSCREEN] Error processing image:", error);
-    throw error;
+    console.error("[OFFSCREEN] Error processing image:", error);
+    return { is_sensitive: false, error: error.message };
   }
 }
+
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (message.type === "processImage") {
+    console.log("[OFFSCREEN] Received image for processing");
+    processImage(message.imageData, message.threshold)
+      .then(result => {
+        console.log("[OFFSCREEN] Processing result:", result);
+        sendResponse(result);
+      })
+      .catch(error => {
+        console.error("[OFFSCREEN] Error in processing:", error);
+        sendResponse({ is_sensitive: false, error: error.message });
+      });
+    return true;
+  }
+});
+
+
+
+
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (message.type === "processImage") {
+    console.log("[OFFSCREEN] Received image for processing");
+    processImage(message.imageData, message.threshold)
+      .then(result => {
+        console.log("[OFFSCREEN] Processing result:", result);
+        sendResponse(result);
+      })
+      .catch(error => {
+        console.error("[OFFSCREEN] Error in processing:", error);
+        sendResponse({ is_sensitive: false, error: error.message });
+      });
+    return true;
+  }
+});
 
 // Start model initialization immediately when offscreen document loads
 console.log("🟢 [OFFSCREEN] Offscreen document loaded");
