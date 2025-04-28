@@ -1,7 +1,7 @@
 # 📌 Misfah - Content Filtering Extension for Threads & Twitter (X)
 
 ## 🚀 Project Overview
-Misfah is a **content filtering browser extension** that helps users filter out **sensitive content** on **Threads and Twitter (X)** by detecting **keywords** related to topics like **pornography,gambling, violence, and other restricted categories**. The extension automatically **removes flagged tweets** or, in test mode, **displays an alert** instead of removing the content.
+Misfah is a **content filtering browser extension** that helps users filter out **sensitive content** on **Threads and Twitter (X)** by detecting **keywords** related to topics like **sexual,gambling, violence, and other restricted categories**. The extension automatically **removes flagged tweets** or, in test mode, **displays an alert** instead of removing the content.
 
 ## 🔧 Tech Stack
 - **Frontend:** JavaScript (Browser Extension API)
