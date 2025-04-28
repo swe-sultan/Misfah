@@ -1,27 +1,42 @@
 {
   "alcohol": {
+    "440": "beer bottle",
+    "441": "beer glass",
+    "901": "whiskey jug",
     "907": "wine bottle",
     "927": "wine glass",
-    "966": "red wine",
-    "440": "beer bottle",
-    "441": "beer glass"
+    "966": "red wine"
   },
   "gambling": {
     "800": "slot machine"
   },
   "violence": {
-    "596": "hatchet",
-    "763": "revolver",
     "413": "assault rifle",
+    "471": "cannon",
+    "491": "chainsaw",
+    "499": "cleaver",
+    "583": "guillotine",
+    "596": "hatchet",
+    "652": "military uniform",
+    "657": "missile",
+    "744": "projectile, missile",
+    "763": "revolver, six-gun, six-shooter",
     "764": "rifle",
-    "499": "cleaver"
+    "847": "tank, army tank",
+    "895": "warplane"
   },
   "polytheism": {
-    "863": "totem pole",
+    "406": "altar",
+    "442": "bell cote",
+    "496": "Chrismtmas stocking",
     "497": "church",
     "663": "monastery",
-    "442": "bell cote",
-    "406": "altar",
+    "863": "totem pole",
     "887": "vestment"
+  },
+  "sexual": {
+    "445": "bikini",
+    "459": "bra",
+    "680": "nipple"
   }
 }

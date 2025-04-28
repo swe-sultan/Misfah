@@ -41,12 +41,6 @@
       "violence"
     ]
   },
-  "763": {
-    "name": "revolver",
-    "categories": [
-      "violence"
-    ]
-  },
   "413": {
     "name": "assault rifle",
     "categories": [
@@ -100,5 +94,67 @@
     "categories": [
       "polytheism"
     ]
+  },
+  "471":{
+    "name": "cannon",
+    "categories":[
+      "violence"
+    ]
+  },
+  "445":{
+    "name": "bikini",
+    "category":["sexual"]
+  },
+  "459":{
+    "name": "bra",
+    "categories": ["sexual"]
+  },
+  "491":{
+    "name": "chain saw",
+    "categories": ["violence"]
+  },
+  "496":{
+    "name": "Chrismtmas_stocking",
+    "categories":["polytheism"]
+  },
+  "583":{
+    "name": "guillotine",
+    "categories":["violence"]
+  },
+  "652":{
+    "name": "military uniform",
+    "categories":["violence"]
+  },
+  "657": {
+    "name": "missile",
+    "categories": ["violence"]
+  },
+  "680": {
+    "name": "nipple",
+    "categories": ["sexual"]
+  },
+  "744": {
+    "name": "projectile, missile",
+    "categories": ["violence"]
+  },
+  "763": {
+    "name": "revolver, six-gun, six-shooter",
+    "categories": ["violence"]
+  },
+  "847": {
+    "name": "tank, army tank",
+    "categories": ["violence"]
+  },
+  "860": {
+    "name": "tobacco shop",
+    "categories": ["wine"]
+  },
+  "895": {
+    "name": "warplane",
+    "categories": ["violence"]
+  },
+  "901": {
+    "name": "whiskey jug",
+    "categories": ["alcohol"]
   }
 }

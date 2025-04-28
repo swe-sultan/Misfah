@@ -1,5 +1,6 @@
 // Add this with your other variables at the top of the file
 const hiddenPostsData = {}; // Store post IDs and their categories
+let manualProcessingEnabled = false; // Flag to control continuous processing mode
 
 // At the very beginning of the file
 console.log("🔴 Content script file started loading");
@@ -14,6 +15,11 @@ console.log("🟢 Created window.misfah object");
 console.log("🟠 DOMContentLoaded fired");
 // Improved content script with better error handling
 console.log("[CONTENT] Content script loaded at", new Date().toISOString());
+let initialBatchProcessed = false;
+const INITIAL_BATCH_SIZE = 50; // Process only 50 tweets on initial load
+let batchProcessingInProgress = false; // Flag to prevent multiple batches processing simultaneously
+let processedBatchCount = 0; // Track how many batches we've processed
+let lastBatchTime = 0; // Track when the last batch was processed
 
 // Debug mode - set to true for detailed logging
 const DEBUG_MODE = true;
@@ -29,6 +35,7 @@ let preferences = {
   violence: true,
   gambling: true,
   alcohol: true,
+  sexual: true
 };
 
 // Default keywords for each category
@@ -37,6 +44,7 @@ const categoryKeywords = {
   violence: ["violence", "aggression", "abuse"],
   gambling: ["gambling", "betting", "casino", "قرعة"],
   alcohol: ["alcohol", "drinks", "liquor"],
+  sexual: ["sexual", "nude", "naked", "porn"]
 };
 
 // Define the safe categories - content in these categories should not be hidden
@@ -168,7 +176,7 @@ function forceReprocessAllContent() {
          " posts";
 }
 
-// Main initialization function - call this when the document is ready
+// Update the initializeExtension function to add the manual processing button
 function initializeExtension() {
   debugLog("Initializing extension...");
   
@@ -200,7 +208,13 @@ function initializeExtension() {
     
     // Initialize filtering
     checkModelAndStartFiltering();
+    
+    // Add the manual processing button
+    setTimeout(() => {
+      addManualProcessingButton();
+    }, 5000);
   });
+  
   debugLog("✅ Initialization complete - filter enabled: " + isEnabled);
   
   // Force an initial processing run
@@ -210,26 +224,9 @@ function initializeExtension() {
   }, 3000);
 }
 
-// Wait for DOM content to be loaded
-document.addEventListener("DOMContentLoaded", function() {
-  debugLog("DOM content loaded, initializing Misfah");
-  
-  // Initialize our extension
-  initializeExtension();
-});
 
-// Expose debug functions to console
-window.misfah = {
-  forceReprocess: forceReprocessAllContent,
-  getStats: () => ({
-    processedPosts: processedPosts.size,
-    hiddenPosts: hiddenPosts.size,
-    twitterResults: Object.keys(twitterTextResults).length,
-    threadsResults: Object.keys(threadsTextResults).length,
-    twitterFiltered: twitterFilteredCount,
-    threadsFiltered: threadsFilteredCount
-  })
-};
+
+
 
 // ==========================================
 // MODEL & API INITIALIZATION
@@ -268,6 +265,330 @@ function initializeTextAPI() {
   
   return true;
 }
+
+// Modified setupMutationObserver function that handles new content better
+function setupMutationObserver() {
+  console.log("⚙️ Setting up mutation observer");
+  debugLog("Setting up mutation observer");
+  
+  // Variables to track significant content changes
+  let lastObserverRun = 0;
+  let significantChangesCount = 0;
+  let newPostsDetected = false;
+  
+  const throttledObserver = new MutationObserver((mutations) => {
+    const now = Date.now();
+    
+    // First, check for posts that were hidden but are now visible again
+    const currentPosts = getPosts();
+    const allCurrentPosts = [...currentPosts.twitterPosts, ...currentPosts.threadsPosts];
+    
+    // Look for posts with IDs in our hiddenPostsData object
+    for (const post of allCurrentPosts) {
+      const postId = getPostId(post);
+      
+      // If this post should be hidden but isn't currently hidden
+      if (hiddenPostsData[postId] && !post.dataset.hasMisfahPlaceholder) {
+        // Skip if user manually showed this post
+        if (post.dataset.misfahUserShown === "true") {
+          continue;
+        }
+        
+        // Get the saved categories from our data store
+        const savedData = hiddenPostsData[postId];
+        const categories = savedData.categories || ['sensitive'];
+        
+        // Re-create the placeholder with the correct categories
+        createFilteredPostPlaceholder(post, categories, null);
+        
+        // Add to hiddenPosts set to prevent reprocessing
+        hiddenPosts.add(post);
+      }
+    }
+    
+    // Count significant DOM changes
+    const significantAdditions = mutations.reduce((count, mutation) => {
+      return count + mutation.addedNodes.length;
+    }, 0);
+    
+    // If we detect many new nodes (like new tweets being loaded)
+    if (significantAdditions > 8) { // Slightly more sensitive threshold
+      significantChangesCount++;
+      console.log(`Detected ${significantAdditions} new nodes (count: ${significantChangesCount})`);
+      
+      // Mark that new posts were detected
+      newPostsDetected = true;
+      
+      // Check if enough time has passed since the last run and no processing is happening
+      if (now - lastObserverRun > 5000 && !batchProcessingInProgress) {
+        lastObserverRun = now;
+        
+        // Check if we have any unprocessed posts
+        const { twitterPosts, threadsPosts } = getPosts();
+        const unprocessedPosts = [
+          ...Array.from(twitterPosts).filter(post => !isPostProcessedByMisfah(post)),
+          ...Array.from(threadsPosts).filter(post => !isPostProcessedByMisfah(post))
+        ];
+        
+        if (unprocessedPosts.length > 10) {
+          console.log(`Found ${unprocessedPosts.length} unprocessed posts after scrolling`);
+          
+          // Reset counter after triggering processing
+          significantChangesCount = 0;
+          newPostsDetected = false;
+          
+          // Only run if enabled
+          if (isEnabled) {
+            console.log("Triggering batch processing for newly detected posts");
+            
+            // Trigger with a slight delay to let the page stabilize
+            setTimeout(() => {
+              runFilterContent(true);
+            }, 1500);
+          }
+        }
+      }
+    }
+    
+    // Even if we haven't seen enough changes yet, if we've accumulated changes and some time has passed,
+    // check if we should process new content
+    if (newPostsDetected && significantChangesCount >= 2 && now - lastObserverRun > 8000 && !batchProcessingInProgress) {
+      lastObserverRun = now;
+      
+      // Check for unprocessed posts
+      const { twitterPosts, threadsPosts } = getPosts();
+      const unprocessedPosts = [
+        ...Array.from(twitterPosts).filter(post => !isPostProcessedByMisfah(post)),
+        ...Array.from(threadsPosts).filter(post => !isPostProcessedByMisfah(post))
+      ];
+      
+      if (unprocessedPosts.length > 15) {
+        console.log(`Found ${unprocessedPosts.length} unprocessed posts after accumulated changes`);
+        
+        // Reset counter after triggering processing
+        significantChangesCount = 0;
+        newPostsDetected = false;
+        
+        // Only run if enabled
+        if (isEnabled) {
+          console.log("Triggering batch processing for accumulated new posts");
+          
+          // Trigger with a slight delay
+          setTimeout(() => {
+            runFilterContent(true);
+          }, 1500);
+        }
+      }
+    }
+  });
+
+  // Start observing the document
+  throttledObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  // Clean up observer when extension is disabled/removed
+  window.addEventListener("unload", () => {
+    throttledObserver.disconnect();
+  });
+  
+  debugLog("Mutation observer initialized");
+}
+
+
+// Add scroll tracking to detect when user is actively scrolling
+let lastUserScrollTime = 0;
+window.addEventListener('scroll', () => {
+  lastUserScrollTime = Date.now();
+}, { passive: true });
+
+// Add a status display to show processing information
+function addProcessingStatusDisplay() {
+  // Check if status display already exists
+  if (document.getElementById('misfah-status-display')) {
+    return;
+  }
+  
+  const statusContainer = document.createElement('div');
+  statusContainer.id = 'misfah-status-display';
+  statusContainer.style.position = 'fixed';
+  statusContainer.style.bottom = '20px';
+  statusContainer.style.right = '20px';
+  statusContainer.style.zIndex = '10000';
+  statusContainer.style.display = 'flex';
+  statusContainer.style.flexDirection = 'column';
+  statusContainer.style.gap = '10px';
+  
+  // Counter display element
+  const counterDisplay = document.createElement('div');
+  counterDisplay.id = 'misfah-counter';
+  counterDisplay.textContent = 'تم تحليل: 0 منشور';
+  counterDisplay.style.backgroundColor = 'rgba(79, 163, 247, 0.9)';
+  counterDisplay.style.color = 'white';
+  counterDisplay.style.borderRadius = '20px';
+  counterDisplay.style.padding = '8px 12px';
+  counterDisplay.style.textAlign = 'center';
+  counterDisplay.style.fontSize = '14px';
+  counterDisplay.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  counterDisplay.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  
+  // Button to manually process more
+  const processButton = document.createElement('button');
+  processButton.id = 'misfah-process-more';
+  processButton.textContent = 'تحليل المزيد من المنشورات';
+  processButton.style.backgroundColor = '#4fa3f7';
+  processButton.style.color = 'white';
+  processButton.style.border = 'none';
+  processButton.style.borderRadius = '20px';
+  processButton.style.padding = '8px 12px';
+  processButton.style.cursor = 'pointer';
+  processButton.style.fontWeight = 'bold';
+  processButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  processButton.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  
+  processButton.addEventListener('click', () => {
+    runFilterContent(true);
+  });
+  
+  // Function to update the counter
+  function updateProcessingCounter() {
+    const stats = window.misfah.getStats();
+    const totalProcessed = stats.processedPosts; 
+    const totalFiltered = stats.twitterFiltered + stats.threadsFiltered;
+    
+    counterDisplay.textContent = `تم تحليل: ${totalProcessed} منشور | تم تصفية: ${totalFiltered} | ${processedBatchCount} دفعات`;
+  }
+  
+  // Update counter initially
+  updateProcessingCounter();
+  
+  // Set up timer to update counter
+  setInterval(updateProcessingCounter, 5000);
+  
+  statusContainer.appendChild(counterDisplay);
+  statusContainer.appendChild(processButton);
+  document.body.appendChild(statusContainer);
+}
+
+// Modified to reset batch processing on URL changes
+function setupURLChangeMonitoring() {
+  let lastURL = window.location.href;
+  
+  // Check for URL changes periodically
+  setInterval(() => {
+    const currentURL = window.location.href;
+    if (currentURL !== lastURL) {
+      debugLog(`URL changed from ${lastURL} to ${currentURL}, resetting state`);
+      console.log("URL changed, resetting Misfah state");
+      
+      // Reset all tracking
+      processedPosts = new Set();
+      hiddenPosts = new Set();
+      twitterTextResults = {};
+      threadsTextResults = {};
+      
+      // Reset the batch processing flags
+      initialBatchProcessed = false;
+      processedBatchCount = 0;
+      batchProcessingInProgress = false;
+      
+      // Run filtering after a small delay to let the new page load
+      setTimeout(() => {
+        if (isEnabled) {
+          runFilterContent();
+        }
+      }, 1000);
+      
+      lastURL = currentURL;
+    }
+  }, 1000);
+  
+  // Also monitor for Twitter's SPA navigation events that don't change the URL
+  document.addEventListener('click', (event) => {
+    // Check if clicked element is a navigation link
+    const isNavigation = event.target.closest('a[href^="/"]') || 
+                        event.target.closest('a[role="link"]') ||
+                        event.target.closest('[data-testid="AppTabBar_Home_Link"]') ||
+                        event.target.closest('[data-testid="AppTabBar_Explore_Link"]');
+    
+    if (isNavigation) {
+      debugLog("Navigation click detected, scheduling state reset");
+      
+      // Reset all tracking after a slight delay to ensure navigation completes
+      setTimeout(() => {
+        processedPosts = new Set();
+        hiddenPosts = new Set(); 
+        twitterTextResults = {};
+        threadsTextResults = {};
+        
+        // Reset the batch processing flags
+        initialBatchProcessed = false;
+        processedBatchCount = 0;
+        batchProcessingInProgress = false;
+        
+        // Run filtering if enabled
+        if (isEnabled) {
+          runFilterContent();
+        }
+      }, 1500);
+    }
+  });
+  
+  debugLog("URL change monitoring initialized");
+}
+
+
+
+// Update the initializeExtension function to add the status display
+function initializeExtension() {
+  debugLog("Initializing extension...");
+  
+  // Load saved hidden posts
+  loadHiddenPosts();
+  
+  // Load preferences and filter state from storage
+  chrome.storage.sync.get(["preferences", "isEnabled", "twitterFilteredCount", "threadsFilteredCount", "threshold"], (data) => {
+    debugLog("Initial filtering starting");
+    
+    if (data.preferences) {
+      preferences = data.preferences;
+    }
+    if (data.isEnabled !== undefined) {
+      isEnabled = data.isEnabled;
+    }
+    
+    twitterFilteredCount = data.twitterFilteredCount || 0;
+    threadsFilteredCount = data.threadsFilteredCount || 0;
+
+    debugLog("Initial preferences loaded:", preferences);
+    debugLog("Initial filtering state loaded:", isEnabled);
+    
+    // Initialize text API
+    initializeTextAPI();
+    
+    // Setup URL change monitoring to reset state on navigation
+    setupURLChangeMonitoring();
+    
+    // Initialize filtering
+    checkModelAndStartFiltering();
+    
+    // Add the processing status display
+    setTimeout(() => {
+      addProcessingStatusDisplay();
+    }, 5000);
+  });
+  
+  debugLog("✅ Initialization complete - filter enabled: " + isEnabled);
+  
+  // Force an initial processing run
+  setTimeout(() => {
+    debugLog("🔄 Forcing initial content scan");
+    runFilterContent();
+  }, 3000);
+}
+
+
 
 // Improved model status checking with proper error handling
 function checkModelAndStartFiltering() {
@@ -484,7 +805,7 @@ function isPostProcessedByMisfah(post) {
 // TEXT ANALYSIS FUNCTIONS
 // ==========================================
 
-// Function to batch analyze posts texts
+// Improved batch text analysis that combines API and keyword analysis
 async function batchAnalyzePostsText() {
   if (pendingTextAnalysis) {
     debugLog("Text analysis already in progress, skipping");
@@ -494,7 +815,7 @@ async function batchAnalyzePostsText() {
   pendingTextAnalysis = true;
   
   try {
-    debugLog("Starting batch text analysis with Claude API");
+    debugLog("Starting batch text analysis with Claude API and keywords");
     const { twitterPosts, threadsPosts } = getPosts();
     
     // Get unprocessed posts - improved to also check hiddenPosts set
@@ -508,98 +829,152 @@ async function batchAnalyzePostsText() {
     debugLog(`Found ${unprocessedTwitterPosts.length} unprocessed Twitter posts and ${unprocessedThreadsPosts.length} unprocessed Threads posts`);
     console.log(`Running batch text analysis: ${unprocessedTwitterPosts.length} Twitter posts, ${unprocessedThreadsPosts.length} Threads posts`);
     
-    // Debug the DOM state if we're finding 0 unprocessed posts
-    if (unprocessedTwitterPosts.length === 0 && twitterPosts.length > 0) {
-      console.log("Debug: Twitter posts DOM state");
-      Array.from(twitterPosts).slice(0, 3).forEach((post, index) => {
-        console.log(`Post ${index + 1} data attributes:`, {
-          hasMisfahPlaceholder: post.dataset.hasMisfahPlaceholder,
-          misfahContentViewed: post.dataset.misfahContentViewed,
-          misfahProcessed: post.dataset.misfahProcessed,
-          inProcessedSet: processedPosts.has(post),
-          inHiddenSet: hiddenPosts.has(post),
-          firstTextChars: post.innerText.substring(0, 30)
-        });
-      });
-    }
-    
     // Process Twitter posts first
     if (unprocessedTwitterPosts.length > 0) {
-      // Extract text content from posts
-      const textsToAnalyze = unprocessedTwitterPosts.map(post => {
+      // Extract text content from posts with their corresponding post objects
+      const postsWithText = unprocessedTwitterPosts.map(post => {
         const textElement = post.querySelector('[data-testid="tweetText"]');
-        return textElement ? textElement.textContent.trim() : '';
-      }).filter(text => text.length > 0); // Filter out empty texts
+        const text = textElement ? textElement.textContent.trim() : '';
+        return { post, text };
+      }).filter(item => item.text.length > 0); // Filter out empty texts
+      
+      // Extract just the texts for API call
+      const textsToAnalyze = postsWithText.map(item => item.text);
       
       if (textsToAnalyze.length > 0) {
-        debugLog(`Analyzing ${textsToAnalyze.length} Twitter texts with Claude API`);
+        debugLog(`Analyzing ${textsToAnalyze.length} Twitter texts with Claude API and keywords`);
         console.log("Sample tweet text:", textsToAnalyze[0].substring(0, 100));
         
-        // Use our textAnalysisAPI to analyze the texts
+        // First do keyword analysis for all texts
+        const keywordResults = textsToAnalyze.map(text => analyzeTextWithKeywords(text));
+        
+        // Then try API analysis
+        let apiResults = [];
         try {
-          const results = await window.textAnalysisAPI.analyzeTexts(textsToAnalyze);
-          debugLog(`Received ${results.length} results from API`);
-          console.log(`Text analysis results for ${results.length} tweets`);
-          
-          // Map results back to posts
-          let resultIndex = 0;
-          unprocessedTwitterPosts.forEach(post => {
-            const textElement = post.querySelector('[data-testid="tweetText"]');
-            if (textElement && textElement.textContent.trim()) {
-              twitterTextResults[getPostId(post)] = results[resultIndex];
-              console.log(`Assigned category '${results[resultIndex]}' to post`, post.innerText.substring(0, 30));
-              resultIndex++;
-            }
-          });
+          apiResults = await window.textAnalysisAPI.analyzeTexts(textsToAnalyze);
+          debugLog(`Received ${apiResults.length} results from API`);
+          console.log(`Text analysis results for ${apiResults.length} tweets`);
         } catch (error) {
-          console.error("Error analyzing Twitter texts:", error);
+          console.error("Error analyzing Twitter texts with API:", error);
+          // If API fails, we'll use just the keyword results
+          apiResults = new Array(textsToAnalyze.length).fill('safe');
         }
+        
+        // Combine API and keyword results, preferring the more sensitive category
+        // (non-safe category takes precedence)
+        const combinedResults = apiResults.map((apiResult, index) => {
+          const keywordResult = keywordResults[index];
+          
+          // If either result is non-safe, use that result
+          if (!isSafeCategory(apiResult) || !isSafeCategory(keywordResult)) {
+            // If both are sensitive, prioritize API result but note the keyword match
+            if (!isSafeCategory(apiResult) && !isSafeCategory(keywordResult)) {
+              console.log(`Both API (${apiResult}) and keywords (${keywordResult}) detected sensitivity`);
+              return apiResult; // Prioritize API for category specificity
+            }
+            // Otherwise return whichever is sensitive
+            return isSafeCategory(apiResult) ? keywordResult : apiResult;
+          }
+          
+          // If both are safe, return the API result
+          return apiResult;
+        });
+        
+        // Map combined results back to posts
+        postsWithText.forEach((item, index) => {
+          const postId = getPostId(item.post);
+          twitterTextResults[postId] = combinedResults[index];
+          console.log(`Assigned combined category '${combinedResults[index]}' to post`, 
+                       item.text.substring(0, 30), 
+                       `(API: ${apiResults[index]}, Keywords: ${keywordResults[index]})`);
+        });
       }
     }
     
-    // Process Threads posts (similar logic to Twitter)
+    // Process Threads posts using the same combined approach
     if (unprocessedThreadsPosts.length > 0) {
-      // Extract text content from posts
-      const textsToAnalyze = unprocessedThreadsPosts.map(post => {
-        return post.innerText.trim();
-      }).filter(text => text.length > 0); // Filter out empty texts
+      // Extract text content from posts with their corresponding post objects
+      const postsWithText = unprocessedThreadsPosts.map(post => {
+        const text = post.innerText.trim();
+        return { post, text };
+      }).filter(item => item.text.length > 0); // Filter out empty texts
+      
+      // Extract just the texts for API call
+      const textsToAnalyze = postsWithText.map(item => item.text);
       
       if (textsToAnalyze.length > 0) {
-        debugLog(`Analyzing ${textsToAnalyze.length} Threads texts with Claude API`);
+        debugLog(`Analyzing ${textsToAnalyze.length} Threads texts with Claude API and keywords`);
         
-        // Use our textAnalysisAPI to analyze the texts
+        // First do keyword analysis for all texts
+        const keywordResults = textsToAnalyze.map(text => analyzeTextWithKeywords(text));
+        
+        // Then try API analysis
+        let apiResults = [];
         try {
-          const results = await window.textAnalysisAPI.analyzeTexts(textsToAnalyze);
-          debugLog(`Received ${results.length} results from API`);
-          
-          // Map results back to posts
-          let resultIndex = 0;
-          unprocessedThreadsPosts.forEach(post => {
-            const text = post.innerText.trim();
-            if (text) {
-              threadsTextResults[getPostId(post)] = results[resultIndex++];
-            }
-          });
+          apiResults = await window.textAnalysisAPI.analyzeTexts(textsToAnalyze);
+          debugLog(`Received ${apiResults.length} results from API`);
         } catch (error) {
-          console.error("Error analyzing Threads texts:", error);
+          console.error("Error analyzing Threads texts with API:", error);
+          // If API fails, we'll use just the keyword results
+          apiResults = new Array(textsToAnalyze.length).fill('safe');
         }
+        
+        // Combine API and keyword results, preferring the more sensitive category
+        const combinedResults = apiResults.map((apiResult, index) => {
+          const keywordResult = keywordResults[index];
+          
+          // If either result is non-safe, use that result
+          if (!isSafeCategory(apiResult) || !isSafeCategory(keywordResult)) {
+            // If both are sensitive, prioritize API result but note the keyword match
+            if (!isSafeCategory(apiResult) && !isSafeCategory(keywordResult)) {
+              console.log(`Both API (${apiResult}) and keywords (${keywordResult}) detected sensitivity`);
+              return apiResult; // Prioritize API for category specificity
+            }
+            // Otherwise return whichever is sensitive
+            return isSafeCategory(apiResult) ? keywordResult : apiResult;
+          }
+          
+          // If both are safe, return the API result
+          return apiResult;
+        });
+        
+        // Map combined results back to posts
+        postsWithText.forEach((item, index) => {
+          const postId = getPostId(item.post);
+          threadsTextResults[postId] = combinedResults[index];
+          console.log(`Assigned combined category '${combinedResults[index]}' to Threads post`, 
+                      `(API: ${apiResults[index]}, Keywords: ${keywordResults[index]})`);
+        });
       }
     }
   } catch (error) {
-    console.error("Error in batch text analysis:", error);
+    console.error("Error in combined batch text analysis:", error);
   } finally {
     pendingTextAnalysis = false;
   }
 }
 
-// Fallback keyword analysis
+// Enhanced keyword analysis function for more comprehensive detection
 function analyzeTextWithKeywords(text) {
   const lowercaseText = text.toLowerCase();
+  
+  // Check each category's keywords
   for (const [category, keywords] of Object.entries(categoryKeywords)) {
     if (preferences[category] && keywords.some(keyword => lowercaseText.includes(keyword))) {
+      console.log(`Keyword match found in text: category ${category}, keyword: ${keywords.find(k => lowercaseText.includes(k))}`);
       return category;
     }
   }
+  
+  // Additional check for Arabic-specific patterns (example implementation)
+  // This is where you can add more sophisticated Arabic text analysis
+  
+  // Check for Quranic patterns that should be marked as Islamic content
+  if (/\bبسم الله\b|\bقال الله\b|\bقال تعالى\b|\bآية\b|\bسورة\b/i.test(text)) {
+    return 'Islam'; // Mark as Islamic content rather than sensitive
+  }
+  
+  // If no matches found, mark as safe
   return 'safe';
 }
 
@@ -710,42 +1085,501 @@ async function processImageWithModel(img) {
   }
 }
 
+// New function to process posts with the loader
+async function processPostsWithLoader(twitterPosts, threadsPosts) {
+  // Show the loader
+  const loader = createMisfahLoader("تحليل المحتوى");
+  let progress = 0;
+  
+  // Start a progress simulation
+  const progressInterval = setInterval(() => {
+    progress += 5;
+    if (progress <= 90) {
+      loader.updateProgress(progress);
+    }
+  }, 300);
+  
+  try {
+    // First do text analysis in batch
+    await batchAnalyzePostsText();
+    
+    // Process the tweet batches
+    // Create a modified version of filterContent that accepts specific post arrays
+    let filteredCount = await filterSpecificPosts(twitterPosts, threadsPosts);
+    
+    // Complete the loader
+    clearInterval(progressInterval);
+    loader.updateProgress(100);
+    loader.complete();
+    
+    return filteredCount;
+  } catch (error) {
+    clearInterval(progressInterval);
+    loader.remove();
+    console.error("Error during batch processing:", error);
+    throw error;
+  }
+}
+
+// Specific filtering function for the given posts
+async function filterSpecificPosts(twitterPosts, threadsPosts) {
+  if (!isEnabled) {
+    debugLog("Filtering is disabled");
+    return 0;
+  }
+
+  debugLog("Starting content filtering for specific posts");
+  console.log(`Processing ${twitterPosts.length} Twitter posts, ${threadsPosts.length} Threads posts`);
+
+  let filteredCount = 0;
+
+  // Filter Twitter posts
+  for (const post of twitterPosts) {
+    // Skip already processed posts
+    if (isPostProcessedByMisfah(post) || hiddenPosts.has(post)) {
+      console.log("Skipping already processed post");
+      continue;
+    }
+    
+    try {
+      // Mark post as processed to avoid reprocessing
+      processedPosts.add(post);
+      post.dataset.misfahProcessed = "true";
+      
+      // Get text analysis result from our batch processing
+      const postId = getPostId(post);
+      const textCategory = twitterTextResults[postId] || 'safe';
+      console.log(`Tweet ${postId} text category:`, textCategory);
+      
+      // Initialize variables
+      let shouldHide = shouldHideContent(textCategory, preferences);
+      let sensitiveCategories = shouldHide ? [textCategory] : [];
+      let imageResult = null;
+
+      // If text wasn't sensitive, check for images
+      if (!shouldHide) {
+        console.log("Text not sensitive, checking images");
+        const modelStatus = await new Promise(resolve => {
+          chrome.runtime.sendMessage({ action: "getModelStatus" }, response => {
+            resolve(response || { isLoaded: false });
+          });
+        });
+        
+        if (modelStatus.isLoaded) {
+          const images = findImagesInPost(post);
+          console.log(`Found ${images.length} images in tweet`);
+          
+          for (const img of images) {
+            if (!img.complete) {
+              await new Promise(resolve => {
+                img.onload = resolve;
+                img.onerror = resolve;
+                setTimeout(resolve, 1000);
+              });
+            }
+            
+            if (img.width < 100 || img.height < 100) continue;
+            
+            try {
+              imageResult = await processImageWithModel(img);
+              console.log("Image analysis result:", imageResult);
+              
+              if (imageResult && imageResult.is_sensitive) {
+                shouldHide = true;
+                sensitiveCategories = imageResult.detected_categories || [];
+                break;
+              }
+            } catch (imgError) {
+              console.error(`Error processing image: ${imgError.message}`);
+            }
+          }
+        }
+      }
+
+      // Apply filtering if the post contains sensitive content
+      if (shouldHide) {
+        const originalContent = post.innerHTML;
+        createFilteredPostPlaceholder(post, sensitiveCategories, originalContent);
+        hiddenPosts.add(post);
+        twitterFilteredCount++;
+        filteredCount++;
+        
+        console.log(`HIDDEN TWEET: Category: ${sensitiveCategories.join(', ')}`);
+      } else {
+        console.log("Tweet is safe, not hiding");
+      }
+    } catch (error) {
+      console.error("Error filtering Twitter post:", error);
+    }
+  }
+
+  // Process Threads posts similarly
+  for (const post of threadsPosts) {
+    if (isPostProcessedByMisfah(post) || hiddenPosts.has(post)) {
+      continue;
+    }
+    
+    try {
+      processedPosts.add(post);
+      post.dataset.misfahProcessed = "true";
+      
+      const postId = getPostId(post);
+      const textCategory = threadsTextResults[postId] || 'safe';
+      
+      let shouldHide = shouldHideContent(textCategory, preferences);
+      let sensitiveCategories = shouldHide ? [textCategory] : [];
+      let imageResult = null;
+
+      if (!shouldHide) {
+        const modelStatus = await new Promise(resolve => {
+          chrome.runtime.sendMessage({ action: "getModelStatus" }, response => {
+            resolve(response || { isLoaded: false });
+          });
+        });
+        
+        if (modelStatus.isLoaded) {
+          const images = post.querySelectorAll('img:not([alt="Profile photo"])');
+          
+          for (const img of images) {
+            if (!img.complete) {
+              await new Promise(resolve => {
+                img.onload = resolve;
+                img.onerror = resolve;
+                setTimeout(resolve, 1000);
+              });
+            }
+            
+            if (img.width < 100 || img.height < 100) continue;
+            
+            try {
+              imageResult = await processImageWithModel(img);
+              
+              if (imageResult && imageResult.is_sensitive) {
+                shouldHide = true;
+                sensitiveCategories = imageResult.detected_categories || [];
+                break;
+              }
+            } catch (imgError) {
+              console.error(`Error processing image: ${imgError.message}`);
+            }
+          }
+        }
+      }
+
+      if (shouldHide) {
+        const originalContent = post.innerHTML;
+        createFilteredPostPlaceholder(post, sensitiveCategories, originalContent);
+        hiddenPosts.add(post);
+        threadsFilteredCount++;
+        filteredCount++;
+        
+        console.log(`HIDDEN THREADS POST: Category: ${sensitiveCategories.join(', ')}`);
+      }
+    } catch (error) {
+      console.error("Error filtering Threads post:", error);
+    }
+  }
+
+  // Save updated statistics to Chrome storage
+  if (filteredCount > 0) {
+    throttledStorageSave({
+      twitterFilteredCount,
+      threadsFilteredCount
+    });
+  }
+  
+  return filteredCount;
+}
+
 // ==========================================
 // CONTENT FILTERING MAIN FUNCTIONS
 // ==========================================
 
-// Update the runFilterContent function to include batch text analysis
-async function runFilterContent() {
+// Modify the runFilterContent function to respect the batch limit
+async function runFilterContent(forceContinuousProcessing = false) {
   console.log("Starting filtering with loader");
   debugLog("🔍 runFilterContent called - isEnabled=" + isEnabled);
   console.log("🔍 Starting filtering process - enabled=" + isEnabled);
   
-  // Show loader only if there are enough unprocessed posts
+  if (!isEnabled) {
+    return 0;
+  }
+  
+  // Get all posts
   const { twitterPosts, threadsPosts } = getPosts();
+  
+  // If we've already processed the initial batch and continuous processing isn't forced,
+  // don't process any more posts
+  if (initialBatchProcessed && !forceContinuousProcessing && !manualProcessingEnabled) {
+    console.log("Initial batch already processed. Skipping automatic processing.");
+    return 0;
+  }
+  
+  // Filter posts to only get unprocessed ones
   const unprocessedTwitterPosts = Array.from(twitterPosts).filter(post => 
     !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
   );
   const unprocessedThreadsPosts = Array.from(threadsPosts).filter(post => 
     !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
   );
-  const totalUnprocessed = unprocessedTwitterPosts.length + unprocessedThreadsPosts.length;
   
+  // Calculate total unprocessed posts
+  const totalUnprocessed = unprocessedTwitterPosts.length + unprocessedThreadsPosts.length;
   console.log(`Found ${totalUnprocessed} unprocessed posts`);
   
-  // Only show loader if we have enough posts to process
-  if (totalUnprocessed >= 10) {
+  // If we're processing the initial batch, limit the number of posts to process
+  if (!initialBatchProcessed) {
+    // Limit the posts to process to INITIAL_BATCH_SIZE
+    const twitterPostsToProcess = unprocessedTwitterPosts.slice(0, INITIAL_BATCH_SIZE);
+    const threadsPostsToProcess = unprocessedThreadsPosts.slice(0, INITIAL_BATCH_SIZE - twitterPostsToProcess.length);
+    
+    console.log(`Processing initial batch: ${twitterPostsToProcess.length} Twitter posts and ${threadsPostsToProcess.length} Threads posts`);
+    
+    // Mark the rest as processed without actually analyzing them
+    unprocessedTwitterPosts.slice(INITIAL_BATCH_SIZE).forEach(post => {
+      processedPosts.add(post);
+      post.dataset.misfahProcessed = "true";
+    });
+    
+    unprocessedThreadsPosts.slice(INITIAL_BATCH_SIZE - twitterPostsToProcess.length).forEach(post => {
+      processedPosts.add(post);
+      post.dataset.misfahProcessed = "true";
+    });
+    
+    // Use only the limited posts for actual processing
+    const filteredCount = await processPostsWithLoader(twitterPostsToProcess, threadsPostsToProcess);
+    
+    // Mark initial batch as processed
+    initialBatchProcessed = true;
+    
+    return filteredCount;
+  } else if (totalUnprocessed > 0) {
+    // If we're doing continuous processing or manual processing
     // First, do text analysis in batch
     await batchAnalyzePostsText();
-    // Then process with loader
-    return processWithLoader(() => filterContent());
-  } else {
-    // Just run without the loader for small batches
-    if (totalUnprocessed > 0) {
-      await batchAnalyzePostsText();
-    }
+    // Then process without the loader for subsequent batches
     return filterContent();
   }
+  
+  return 0;
 }
+
+// New function to process posts with the loader
+async function processPostsWithLoader(twitterPosts, threadsPosts) {
+  // Show the loader
+  const loader = createMisfahLoader("تحليل المحتوى");
+  let progress = 0;
+  
+  // Start a progress simulation
+  const progressInterval = setInterval(() => {
+    progress += 5;
+    if (progress <= 90) {
+      loader.updateProgress(progress);
+    }
+  }, 300);
+  
+  try {
+    // First do text analysis in batch
+    await batchAnalyzePostsText();
+    
+    // Process the tweet batches
+    // Create a modified version of filterContent that accepts specific post arrays
+    let filteredCount = await filterSpecificPosts(twitterPosts, threadsPosts);
+    
+    // Complete the loader
+    clearInterval(progressInterval);
+    loader.updateProgress(100);
+    loader.complete();
+    
+    return filteredCount;
+  } catch (error) {
+    clearInterval(progressInterval);
+    loader.remove();
+    console.error("Error during batch processing:", error);
+    throw error;
+  }
+}
+
+
+// Show a minimal notification when all posts are processed
+function createMinimalCompletionNotification() {
+  const notification = document.createElement('div');
+  notification.id = 'misfah-complete-notification';
+  notification.textContent = 'تم الانتهاء من تحليل جميع المنشورات الظاهرة';
+  notification.style.position = 'fixed';
+  notification.style.bottom = '20px';
+  notification.style.right = '20px';
+  notification.style.backgroundColor = 'rgba(40, 167, 69, 0.9)'; // Semi-transparent green
+  notification.style.color = 'white';
+  notification.style.padding = '8px 12px';
+  notification.style.borderRadius = '20px';
+  notification.style.zIndex = '10000';
+  notification.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  notification.style.boxShadow = '0 2px 5px rgba(0, 0, 0, 0.2)';
+  notification.style.fontSize = '14px';
+  
+  document.body.appendChild(notification);
+  
+  // Remove after 2 seconds
+  setTimeout(() => {
+    if (notification.parentNode) {
+      notification.parentNode.removeChild(notification);
+    }
+  }, 2000);
+}
+
+// Show a notification when all posts are processed
+function createProcessingCompleteNotification() {
+  const notification = document.createElement('div');
+  notification.id = 'misfah-complete-notification';
+  notification.textContent = 'تم الانتهاء من تحليل جميع المنشورات الظاهرة';
+  notification.style.position = 'fixed';
+  notification.style.bottom = '80px';
+  notification.style.right = '20px';
+  notification.style.backgroundColor = '#28a745'; // Green for success
+  notification.style.color = 'white';
+  notification.style.padding = '10px 15px';
+  notification.style.borderRadius = '20px';
+  notification.style.zIndex = '10000';
+  notification.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  notification.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  
+  document.body.appendChild(notification);
+  
+  // Remove after 3 seconds
+  setTimeout(() => {
+    if (notification.parentNode) {
+      notification.parentNode.removeChild(notification);
+    }
+  }, 3000);
+}
+
+
+// Function to update the processing counter
+function updateProcessingCounter() {
+  const counterDisplay = document.getElementById('misfah-counter');
+  if (counterDisplay) {
+    const stats = window.misfah.getStats();
+    const totalProcessed = stats.processedPosts; 
+    const totalFiltered = stats.twitterFiltered + stats.threadsFiltered;
+    
+    counterDisplay.textContent = `تم تحليل: ${totalProcessed} منشور | تم تصفية: ${totalFiltered} | ${processedBatchCount} دفعات`;
+  }
+}
+
+
+
+// New function to filter specific posts
+async function filterSpecificPosts(twitterPosts, threadsPosts) {
+  if (!isEnabled) {
+    debugLog("Filtering is disabled");
+    return 0;
+  }
+
+  debugLog("Starting content filtering for specific posts");
+  console.log(`Processing ${twitterPosts.length} Twitter posts, ${threadsPosts.length} Threads posts`);
+
+  let filteredCount = 0;
+
+  // Filter Twitter posts
+  for (const post of twitterPosts) {
+    // Skip already processed posts
+    if (isPostProcessedByMisfah(post) || hiddenPosts.has(post)) {
+      console.log("Skipping already processed post");
+      continue;
+    }
+    
+    try {
+      // Rest of your existing filtering code for Twitter posts
+      // Mark post as processed to avoid reprocessing
+      processedPosts.add(post);
+      post.dataset.misfahProcessed = "true";
+      
+      // Get text analysis result from our batch processing
+      const postId = getPostId(post);
+      const textCategory = twitterTextResults[postId] || 'safe';
+      
+      // Initialize variables for filtering
+      let shouldHide = shouldHideContent(textCategory, preferences);
+      let sensitiveCategories = shouldHide ? [textCategory] : [];
+      let imageResult = null;
+
+      // Process images if text wasn't sensitive
+      if (!shouldHide) {
+        // Image processing code (same as your existing code)
+        const modelStatus = await new Promise(resolve => {
+          chrome.runtime.sendMessage({ action: "getModelStatus" }, response => {
+            resolve(response || { isLoaded: false });
+          });
+        });
+        
+        if (modelStatus.isLoaded) {
+          const images = findImagesInPost(post);
+          
+          for (const img of images) {
+            if (!img.complete) {
+              await new Promise(resolve => {
+                img.onload = resolve;
+                img.onerror = resolve;
+                setTimeout(resolve, 1000);
+              });
+            }
+            
+            if (img.width < 100 || img.height < 100) continue;
+            
+            try {
+              imageResult = await processImageWithModel(img);
+              
+              if (imageResult && imageResult.is_sensitive) {
+                shouldHide = true;
+                sensitiveCategories = imageResult.detected_categories || [];
+                break;
+              }
+            } catch (imgError) {
+              debugLog(`Error processing image: ${imgError.message}`);
+            }
+          }
+        }
+      }
+
+      // Apply filtering if needed
+      if (shouldHide) {
+        const originalContent = post.innerHTML;
+        createFilteredPostPlaceholder(post, sensitiveCategories, originalContent);
+        hiddenPosts.add(post);
+        twitterFilteredCount++;
+        filteredCount++;
+        
+        const categoryNames = sensitiveCategories.join(', ');
+        createWebpageAlert(
+          `تنبيه: تم حجب محتوى حساس: ${categoryNames}`, 
+          imageResult
+        );
+      }
+    } catch (error) {
+      console.error("Error filtering Twitter post:", error);
+    }
+  }
+
+  // Filter Threads posts (same structure as above, just with your Threads-specific code)
+  for (const post of threadsPosts) {
+    // Same filtering logic as for Twitter posts
+    // Just use your existing Threads post filtering code
+    // ...
+  }
+
+  // Save updated statistics to Chrome storage
+  if (filteredCount > 0) {
+    throttledStorageSave({
+      twitterFilteredCount,
+      threadsFilteredCount
+    });
+  }
+  
+  return filteredCount;
+}
+
+
 
 // Modified filterContent function to use placeholders instead of hiding content
 async function filterContent() {
@@ -1366,9 +2200,13 @@ function createWebpageAlert(message, modelResult = null, isError = false) {
   }, isError ? 10000 : 5000);
 }
 
-// Function to create and display a loader overlay
+// Modified createMisfahLoader function that preserves scroll position
 function createMisfahLoader(message) {
   console.log("Creating Misfah loader element...");
+  
+  // Save current scroll position
+  const savedScrollPosition = window.scrollY;
+  console.log("Saving scroll position:", savedScrollPosition);
   
   // Remove existing loader if present
   if (document.getElementById("webpage-loader")) {
@@ -1381,10 +2219,7 @@ function createMisfahLoader(message) {
   // Save the original body overflow style
   const originalBodyOverflow = document.body.style.overflow;
   
-  // Prevent scrolling
-  document.body.style.overflow = "hidden";
-
-  // Create overlay first
+  // Create an overlay that doesn't block scrolling
   const overlay = document.createElement('div');
   overlay.id = "webpage-loader-overlay";
   overlay.style.position = "fixed";
@@ -1394,9 +2229,10 @@ function createMisfahLoader(message) {
   overlay.style.height = "100%";
   overlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
   overlay.style.zIndex = "9999";
+  overlay.style.pointerEvents = "none"; // Allow scrolling by letting events pass through
   document.body.appendChild(overlay);
 
-  // Create the loader element with all styles directly applied
+  // Create the loader element positioned at bottom-right corner
   const loaderBox = document.createElement("div");
   loaderBox.id = "webpage-loader";
   loaderBox.style.position = "fixed";
@@ -1416,6 +2252,7 @@ function createMisfahLoader(message) {
   loaderBox.style.display = "flex";
   loaderBox.style.flexDirection = "column";
   loaderBox.style.alignItems = "center";
+  loaderBox.style.pointerEvents = "auto"; // Make the loader itself clickable
 
   // Create the header/title with direct styles
   const title = document.createElement("div");
@@ -1452,7 +2289,7 @@ function createMisfahLoader(message) {
   // Create progress text with direct styles
   const progressText = document.createElement("div");
   progressText.id = "loader-progress-text";
-  progressText.textContent = "جارٍ تحليل المنشورات... 0%";
+  progressText.textContent = `جارٍ تحليل المنشورات... (الدفعة ${processedBatchCount})`;
   progressText.style.fontSize = "14px";
   progressText.style.marginBottom = "10px";
   progressText.style.color = "#666";
@@ -1479,33 +2316,6 @@ function createMisfahLoader(message) {
   progressBarFill.style.transition = "width 0.5s ease";
   progressBarContainer.appendChild(progressBarFill);
 
-  // Create close button with direct styles
-  const closeButton = document.createElement("button");
-  closeButton.textContent = "إغلاق";
-  closeButton.style.backgroundColor = "#f1f3f5";
-  closeButton.style.color = "#333";
-  closeButton.style.border = "none";
-  closeButton.style.padding = "8px 16px";
-  closeButton.style.borderRadius = "4px";
-  closeButton.style.cursor = "pointer";
-  closeButton.style.fontWeight = "bold";
-  closeButton.style.fontSize = "14px";
-  closeButton.style.marginTop = "10px";
-  
-  closeButton.addEventListener("click", () => {
-    console.log("Close button clicked");
-    // Restore scrolling
-    document.body.style.overflow = originalBodyOverflow;
-    // Remove elements
-    if (document.getElementById("webpage-loader-overlay")) {
-      document.getElementById("webpage-loader-overlay").remove();
-    }
-    if (document.getElementById("webpage-loader")) {
-      document.getElementById("webpage-loader").remove();
-    }
-  });
-  loaderBox.appendChild(closeButton);
-
   // Add to document
   console.log("Appending loader to body...");
   document.body.appendChild(loaderBox);
@@ -1524,7 +2334,7 @@ function createMisfahLoader(message) {
       }
       
       if (progressTextElement) {
-        progressTextElement.textContent = `جارٍ تحليل المنشورات... ${percent}%`;
+        progressTextElement.textContent = `جارٍ تحليل المنشورات... ${percent}% (الدفعة ${processedBatchCount})`;
       } else {
         console.error("Progress text element not found");
       }
@@ -1551,8 +2361,9 @@ function createMisfahLoader(message) {
       // Auto-hide after 2 seconds
       console.log("Setting up auto-hide in 2 seconds");
       setTimeout(() => {
-        // Restore scrolling
+        // Restore body style
         document.body.style.overflow = originalBodyOverflow;
+        
         // Remove elements
         if (document.getElementById("webpage-loader-overlay")) {
           document.getElementById("webpage-loader-overlay").remove();
@@ -1565,8 +2376,9 @@ function createMisfahLoader(message) {
     
     remove: function() {
       console.log("Manually removing loader");
-      // Restore scrolling
+      // Restore body styles
       document.body.style.overflow = originalBodyOverflow;
+      
       // Remove elements
       if (document.getElementById("webpage-loader-overlay")) {
         document.getElementById("webpage-loader-overlay").remove();
@@ -1577,6 +2389,72 @@ function createMisfahLoader(message) {
     }
   };
 }
+
+// Modify the mutation observer to respect the batch processing limit
+function setupMutationObserver() {
+  console.log("⚙️ Setting up mutation observer");
+  debugLog("Setting up mutation observer");
+  
+  // Create a throttled observer to prevent too many runs
+  let lastObserverRun = 0;
+  const throttledObserver = new MutationObserver((mutations) => {
+    const now = Date.now();
+    
+    // Check for posts that were hidden but are now visible again
+    const currentPosts = getPosts();
+    const allCurrentPosts = [...currentPosts.twitterPosts, ...currentPosts.threadsPosts];
+    
+    // Look for posts with IDs in our hiddenPostsData object
+    for (const post of allCurrentPosts) {
+      const postId = getPostId(post);
+      
+      // If this post should be hidden but isn't currently hidden
+      if (hiddenPostsData[postId] && !post.dataset.hasMisfahPlaceholder) {
+        // Skip if user manually showed this post
+        if (post.dataset.misfahUserShown === "true") {
+          continue;
+        }
+        
+        // Get the saved categories from our data store
+        const savedData = hiddenPostsData[postId];
+        const categories = savedData.categories || ['sensitive'];
+        
+        // Re-create the placeholder with the correct categories
+        createFilteredPostPlaceholder(post, categories, null);
+        
+        // Add to hiddenPosts set to prevent reprocessing
+        hiddenPosts.add(post);
+      }
+    }
+    
+    // Check if we need to reset our processed posts tracking
+    const wasReset = resetProcessedPostsTracking(mutations);
+    
+    // Only run continuous filtering if manually enabled or reset was triggered
+    if ((manualProcessingEnabled || wasReset) && now - lastObserverRun > 1000) {
+      lastObserverRun = now;
+      if (isEnabled) {
+        debugLog("Mutation observer triggered filtering");
+        runFilterContent(wasReset); // Force processing if posts were reset
+      }
+    }
+  });
+
+  // Start observing the document with the configured parameters
+  throttledObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  // Clean up observer when extension is disabled/removed
+  window.addEventListener("unload", () => {
+    throttledObserver.disconnect();
+  });
+  
+  debugLog("Mutation observer initialized");
+}
+
+
 
 // Add a function to use the loader with your existing filtering system
 function processWithLoader(processingFunction) {
@@ -1658,73 +2536,234 @@ function resetProcessedPostsTracking(mutations) {
   return false;
 }
 
-// Set up mutation observer to detect new content and reset tracking when needed
-function setupMutationObserver() {
-  console.log("⚙️ Setting up mutation observer");
-  debugLog("Setting up mutation observer");
+// Add a button to the page to manually trigger processing
+function addManualProcessingButton() {
+  // Check if button already exists
+  if (document.getElementById('misfah-process-more')) {
+    return;
+  }
   
-  // Create a throttled observer to prevent too many runs
-  let lastObserverRun = 0;
-  const throttledObserver = new MutationObserver((mutations) => {
-    const now = Date.now();
-    
-    // Check for posts that were hidden but are now visible again
-    const currentPosts = getPosts();
-    const allCurrentPosts = [...currentPosts.twitterPosts, ...currentPosts.threadsPosts];
-    
-    // Look for posts with IDs in our hiddenPostsData object
-    for (const post of allCurrentPosts) {
-      const postId = getPostId(post);
-      
-      // If this post should be hidden but isn't currently hidden
-      if (hiddenPostsData[postId] && !post.dataset.hasMisfahPlaceholder) {
-        console.log(`Post ${postId} was previously hidden but is now visible - re-hiding`);
-         // Add this condition to respect posts manually shown by the user
-        if (post.dataset.misfahUserShown === "true") {
-          console.log(`Post ${postId} was manually shown by user - not re-hiding`);
-          continue; // Skip this post
-        }
-        // Get the saved categories from our data store
-        const savedData = hiddenPostsData[postId];
-        const categories = savedData.categories || ['sensitive'];
-        
-        // Re-create the placeholder with the correct categories
-        createFilteredPostPlaceholder(post, categories, null);
-        
-        // Add to hiddenPosts set to prevent reprocessing
-        hiddenPosts.add(post);
-      }
-    }
-    
-    // Check if we need to reset our processed posts tracking
-    // due to significant DOM changes (like new tweets being loaded)
-    const wasReset = resetProcessedPostsTracking(mutations);
-    
-    // Only run filtering at most once per second
-    if (now - lastObserverRun > 1000 || wasReset) {
-      lastObserverRun = now;
-      if (isEnabled) {
-        debugLog("Mutation observer triggered filtering");
-        runFilterContent();
-      }
-    }
-  });
-
-  // Start observing the document with the configured parameters
-  throttledObserver.observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
-
-  // Clean up observer when extension is disabled/removed
-  window.addEventListener("unload", () => {
-    throttledObserver.disconnect();
+  const buttonContainer = document.createElement('div');
+  buttonContainer.id = 'misfah-button-container';
+  buttonContainer.style.position = 'fixed';
+  buttonContainer.style.bottom = '20px';
+  buttonContainer.style.right = '20px';
+  buttonContainer.style.zIndex = '10000';
+  buttonContainer.style.display = 'flex';
+  buttonContainer.style.flexDirection = 'column';
+  buttonContainer.style.gap = '10px';
+  
+  const processButton = document.createElement('button');
+  processButton.id = 'misfah-process-more';
+  processButton.textContent = 'تحليل المزيد من المنشورات';
+  processButton.style.backgroundColor = '#4fa3f7';
+  processButton.style.color = 'white';
+  processButton.style.border = 'none';
+  processButton.style.borderRadius = '20px';
+  processButton.style.padding = '10px 15px';
+  processButton.style.cursor = 'pointer';
+  processButton.style.fontWeight = 'bold';
+  processButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  processButton.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  
+  processButton.addEventListener('click', () => {
+    // Process another batch of posts
+    runFilterContent(true);
   });
   
-  debugLog("Mutation observer initialized");
+  const toggleButton = document.createElement('button');
+  toggleButton.id = 'misfah-toggle-continuous';
+  toggleButton.textContent = manualProcessingEnabled ? 'إيقاف التحليل المستمر' : 'تفعيل التحليل المستمر';
+  toggleButton.style.backgroundColor = manualProcessingEnabled ? '#ff4d4d' : '#4fa3f7';
+  toggleButton.style.color = 'white';
+  toggleButton.style.border = 'none';
+  toggleButton.style.borderRadius = '20px';
+  toggleButton.style.padding = '10px 15px';
+  toggleButton.style.cursor = 'pointer';
+  toggleButton.style.fontWeight = 'bold';
+  toggleButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  toggleButton.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  
+  toggleButton.addEventListener('click', () => {
+    manualProcessingEnabled = !manualProcessingEnabled;
+    toggleButton.textContent = manualProcessingEnabled ? 'إيقاف التحليل المستمر' : 'تفعيل التحليل المستمر';
+    toggleButton.style.backgroundColor = manualProcessingEnabled ? '#ff4d4d' : '#4fa3f7';
+    
+    // If enabling continuous processing, process current posts
+    if (manualProcessingEnabled) {
+      runFilterContent(true);
+    }
+  });
+  
+  buttonContainer.appendChild(processButton);
+  buttonContainer.appendChild(toggleButton);
+  document.body.appendChild(buttonContainer);
 }
 
-// Function to handle URL changes and reset state
+// Add a toggle button function for the manual processing mode
+function toggleManualProcessingMode(enable) {
+  manualProcessingEnabled = enable;
+  console.log(`Manual processing mode ${manualProcessingEnabled ? 'enabled' : 'disabled'}`);
+  
+  // Update UI if needed
+  const toggleButton = document.getElementById('misfah-toggle-continuous');
+  if (toggleButton) {
+    toggleButton.textContent = manualProcessingEnabled ? 'إيقاف التحليل المستمر' : 'تفعيل التحليل المستمر';
+    toggleButton.style.backgroundColor = manualProcessingEnabled ? '#ff4d4d' : '#4fa3f7';
+  }
+  
+  // If enabling, trigger a processing run
+  if (manualProcessingEnabled && !batchProcessingInProgress) {
+    runFilterContent(true);
+  }
+}
+
+// Update the addManualProcessingButton function to use the toggle function
+function addManualProcessingButton() {
+  // Check if button already exists
+  if (document.getElementById('misfah-process-more')) {
+    return;
+  }
+  
+  const buttonContainer = document.createElement('div');
+  buttonContainer.id = 'misfah-button-container';
+  buttonContainer.style.position = 'fixed';
+  buttonContainer.style.bottom = '20px';
+  buttonContainer.style.right = '20px';
+  buttonContainer.style.zIndex = '10000';
+  buttonContainer.style.display = 'flex';
+  buttonContainer.style.flexDirection = 'column';
+  buttonContainer.style.gap = '10px';
+  
+  // Counter display element
+  const counterDisplay = document.createElement('div');
+  counterDisplay.id = 'misfah-counter';
+  counterDisplay.textContent = 'تم تحليل: 0 منشور';
+  counterDisplay.style.backgroundColor = 'rgba(79, 163, 247, 0.9)';
+  counterDisplay.style.color = 'white';
+  counterDisplay.style.borderRadius = '20px';
+  counterDisplay.style.padding = '8px 12px';
+  counterDisplay.style.textAlign = 'center';
+  counterDisplay.style.fontSize = '14px';
+  counterDisplay.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  counterDisplay.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  counterDisplay.style.marginBottom = '5px';
+  
+  // Process button
+  const processButton = document.createElement('button');
+  processButton.id = 'misfah-process-more';
+  processButton.textContent = 'تحليل المزيد من المنشورات';
+  processButton.style.backgroundColor = '#4fa3f7';
+  processButton.style.color = 'white';
+  processButton.style.border = 'none';
+  processButton.style.borderRadius = '20px';
+  processButton.style.padding = '10px 15px';
+  processButton.style.cursor = 'pointer';
+  processButton.style.fontWeight = 'bold';
+  processButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  processButton.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  
+  processButton.addEventListener('click', () => {
+    // Process another batch of posts - make sure batchProcessingInProgress is false
+    // to avoid issues with scheduling
+    batchProcessingInProgress = false;
+    runFilterContent(true);
+  });
+
+  toggleButton.addEventListener('click', () => {
+    toggleManualProcessingMode(!manualProcessingEnabled);
+  });
+  
+  // Toggle button
+  const toggleButton = document.createElement('button');
+  toggleButton.id = 'misfah-toggle-continuous';
+  toggleButton.textContent = manualProcessingEnabled ? 'إيقاف التحليل المستمر' : 'تفعيل التحليل المستمر';
+  toggleButton.style.backgroundColor = manualProcessingEnabled ? '#ff4d4d' : '#4fa3f7';
+  toggleButton.style.color = 'white';
+  toggleButton.style.border = 'none';
+  toggleButton.style.borderRadius = '20px';
+  toggleButton.style.padding = '10px 15px';
+  toggleButton.style.cursor = 'pointer';
+  toggleButton.style.fontWeight = 'bold';
+  toggleButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+  toggleButton.style.fontFamily = 'IBM Plex Sans Arabic, Arial, sans-serif';
+  
+  toggleButton.addEventListener('click', () => {
+    toggleManualProcessingMode(!manualProcessingEnabled);
+  });
+  
+  // Function to update the counter
+  function updateProcessingCounter() {
+    const stats = window.misfah.getStats();
+    const totalProcessed = stats.processedPosts; 
+    const totalFiltered = stats.twitterFiltered + stats.threadsFiltered;
+    
+    counterDisplay.textContent = `تم تحليل: ${totalProcessed} منشور | تم تصفية: ${totalFiltered} | ${processedBatchCount} دفعات`;
+  }
+  
+  // Update counter initially
+  updateProcessingCounter();
+  
+  // Set up timer to update counter
+  setInterval(updateProcessingCounter, 5000);
+  
+  buttonContainer.appendChild(counterDisplay);
+  buttonContainer.appendChild(processButton);
+  buttonContainer.appendChild(toggleButton);
+  document.body.appendChild(buttonContainer);
+}
+
+// Update the initializeExtension function to add the manual processing button
+function initializeExtension() {
+  debugLog("Initializing extension...");
+  
+  // Load saved hidden posts
+  loadHiddenPosts();
+  
+  // Load preferences and filter state from storage
+  chrome.storage.sync.get(["preferences", "isEnabled", "twitterFilteredCount", "threadsFilteredCount", "threshold"], (data) => {
+    debugLog("Initial filtering starting");
+    
+    if (data.preferences) {
+      preferences = data.preferences;
+    }
+    if (data.isEnabled !== undefined) {
+      isEnabled = data.isEnabled;
+    }
+    
+    twitterFilteredCount = data.twitterFilteredCount || 0;
+    threadsFilteredCount = data.threadsFilteredCount || 0;
+
+    debugLog("Initial preferences loaded:", preferences);
+    debugLog("Initial filtering state loaded:", isEnabled);
+    
+    // Initialize text API
+    initializeTextAPI();
+    
+    // Setup URL change monitoring to reset state on navigation
+    setupURLChangeMonitoring();
+    
+    // Initialize filtering
+    checkModelAndStartFiltering();
+    
+    // Add the manual processing button
+    setTimeout(() => {
+      addManualProcessingButton();
+    }, 5000);
+  });
+  
+  debugLog("✅ Initialization complete - filter enabled: " + isEnabled);
+  
+  // Force an initial processing run
+  setTimeout(() => {
+    debugLog("🔄 Forcing initial content scan");
+    runFilterContent();
+  }, 3000);
+}
+
+
+
+// Modify the function to handle URL changes with our batch processing approach
 function setupURLChangeMonitoring() {
   let lastURL = window.location.href;
   
@@ -1737,11 +2776,12 @@ function setupURLChangeMonitoring() {
       
       // Reset all tracking
       processedPosts = new Set();
-      hiddenPosts = new Set(); // Reset hidden posts on URL change
-      // But do NOT reset hiddenPostsData since they're persistent across page loads
-      
+      hiddenPosts = new Set();
       twitterTextResults = {};
       threadsTextResults = {};
+      
+      // Reset the initial batch flag to process new batch on new page
+      initialBatchProcessed = false;
       
       // Run filtering after a small delay to let the new page load
       setTimeout(() => {
@@ -1768,11 +2808,12 @@ function setupURLChangeMonitoring() {
       // Reset all tracking after a slight delay to ensure navigation completes
       setTimeout(() => {
         processedPosts = new Set();
-        hiddenPosts = new Set(); // Reset hidden posts on navigation
-        // But do NOT reset hiddenPostsData
-        
+        hiddenPosts = new Set();
         twitterTextResults = {};
         threadsTextResults = {};
+        
+        // Reset the initial batch flag to process new batch on new page
+        initialBatchProcessed = false;
         
         // Run filtering if enabled
         if (isEnabled) {
@@ -1785,12 +2826,63 @@ function setupURLChangeMonitoring() {
   debugLog("URL change monitoring initialized");
 }
 
+
+
 // ==========================================
 // MESSAGE HANDLING
 // ==========================================
 
 // Listen for messages from popup or background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+  if (message.action === "manualProcessPosts") {
+    console.log("Manual processing request received from popup");
+    
+    // Get unprocessed posts
+    const { twitterPosts, threadsPosts } = getPosts();
+    const unprocessedTwitterPosts = Array.from(twitterPosts).filter(post => 
+      !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
+    );
+    const unprocessedThreadsPosts = Array.from(threadsPosts).filter(post => 
+      !isPostProcessedByMisfah(post) && !hiddenPosts.has(post)
+    );
+    
+    const totalUnprocessed = unprocessedTwitterPosts.length + unprocessedThreadsPosts.length;
+    console.log(`Found ${totalUnprocessed} unprocessed posts for manual processing`);
+    
+    if (totalUnprocessed === 0) {
+      sendResponse({ 
+        success: true, 
+        processedCount: 0,
+        message: "No unprocessed posts found" 
+      });
+      return true;
+    }
+    
+    // Reset batch flags to ensure processing starts
+    batchProcessingInProgress = false;
+    
+    // Process the next batch
+    runFilterContent(true)
+      .then(filteredCount => {
+        console.log(`Manual processing completed. Filtered ${filteredCount} posts.`);
+        sendResponse({ 
+          success: true, 
+          processedCount: Math.min(totalUnprocessed, 50), // We process max 50 at a time
+          filteredCount: filteredCount
+        });
+      })
+      .catch(error => {
+        console.error("Error in manual processing:", error);
+        sendResponse({ 
+          success: false, 
+          error: error.message 
+        });
+      });
+    
+    return true; // Keep the message channel open for async response
+  }
+  
   console.log("Message received in content script:", message);
   
   if (message.action === "updateApiKey") {
@@ -1889,6 +2981,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   return false;
 });
+
+// Extend window.misfah to include controls for batch processing
+window.misfah = {
+  forceReprocess: forceReprocessAllContent,
+  processMorePosts: () => runFilterContent(true),
+  toggleContinuousProcessing: () => {
+    manualProcessingEnabled = !manualProcessingEnabled;
+    return `Continuous processing ${manualProcessingEnabled ? 'enabled' : 'disabled'}`;
+  },
+  getStats: () => ({
+    processedPosts: processedPosts.size,
+    hiddenPosts: hiddenPosts.size,
+    twitterResults: Object.keys(twitterTextResults).length,
+    threadsResults: Object.keys(threadsTextResults).length,
+    twitterFiltered: twitterFilteredCount,
+    threadsFiltered: threadsFilteredCount,
+    initialBatchProcessed: initialBatchProcessed,
+    continuousProcessingEnabled: manualProcessingEnabled
+  })
+};
+
+
+// Wait for DOM content to be loaded
+document.addEventListener("DOMContentLoaded", function() {
+  debugLog("DOM content loaded, initializing Misfah");
+  
+  // Initialize our extension
+  initializeExtension();
+});
+function manuallyStartProcessing() {
+  console.log("Manually starting initial processing");
+  // Reset processing flags to ensure we can start fresh
+  batchProcessingInProgress = false;
+  initialBatchProcessed = false;
+  
+  // Run the filter content function with forced processing
+  runFilterContent(true);
+  
+  return "Processing started manually";
+}
+
 
 // Immediate initialization to ensure filtering starts
 console.log("🔄 Starting immediate initialization");

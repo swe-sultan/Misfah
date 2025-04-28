@@ -60,7 +60,7 @@ document.getElementById('testButton').addEventListener('click', async () => {
   try {
     const response = await chrome.runtime.sendMessage({
       action: "runImageTest",
-      imagePath: "OIP2.jpg" // Make sure this file exists in your extension
+      imagePath: "testImages/DoNotOpen!!!.jpg" // Make sure this file exists in your extension
     });
     
     if (response.success) {
@@ -103,6 +103,30 @@ document.getElementById("save-api-key").addEventListener("click", () => {
         });
       }
     });
+  });
+});
+
+// Add a handler for the manual processing button
+document.getElementById("manual-process").addEventListener("click", () => {
+  // Display feedback to the user
+  showCustomAlert("جارٍ تحليل المزيد من المنشورات...");
+  
+  // Send message to content script to process more posts
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, { 
+        action: "manualProcessPosts"
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error sending message to content script:", chrome.runtime.lastError.message);
+          showCustomAlert("فشل في تحليل المنشورات: " + chrome.runtime.lastError.message);
+        } else if (response && response.success) {
+          showCustomAlert(`تم تحليل ${response.processedCount} منشور بنجاح!`);
+        } else {
+          showCustomAlert("فشل في تحليل المنشورات");
+        }
+      });
+    }
   });
 });
 
@@ -395,6 +419,7 @@ document.getElementById("customize-options").addEventListener("click", () => {
       violence: true,
       gambling: true,
       alcohol: true,
+      sexual: true
     };
 
     // Update checkbox states based on saved preferences

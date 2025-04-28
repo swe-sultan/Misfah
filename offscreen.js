@@ -5,6 +5,10 @@ let model = null;
 let flatSensitiveClasses = {};
 let modelThreshold = 0.01;
 
+let nsfwModel = null;
+let nsfwModelLoaded = false;
+let nsfwThreshold = 0.5; // Default threshold for NSFW detection
+
 // Update status display and log
 function updateStatus(message, color) {
   const statusEl = document.getElementById('status');
@@ -82,7 +86,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Initialize TensorFlow and load MobileNet model
 async function initializeModel() {
-  if (modelLoaded) return true;
+  if (modelLoaded && nsfwModelLoaded) return true;
   if (modelLoading) return false;
   
   modelLoading = true;
@@ -178,6 +182,17 @@ async function initializeModel() {
       { fromTFHub: true }
     );
     console.log("🟢 [OFFSCREEN] MobileNetV2 model loaded successfully");
+
+    updateStatus("Loading NSFW model...", "blue");
+    chrome.runtime.sendMessage({
+      action: "modelStatusUpdate",
+      status: "loading NSFW model",
+      progress: 60
+    });
+    
+    // Load the NSFW model
+    nsfwModel = await nsfwjs.load(chrome.runtime.getURL('lib/nsfwjs/model/model.json'));
+    nsfwModelLoaded = true;
     
     // Update progress
     chrome.runtime.sendMessage({
@@ -251,15 +266,62 @@ function getTopK(values, k) {
 }
 
 async function processImage(imageData, threshold = 0.5) {
-  if (!modelLoaded || !model) {
-    console.error("[OFFSCREEN] Model not loaded");
-    return { is_sensitive: false, error: "Model not loaded" };
+  // First check if either model is available
+  if ((!modelLoaded || !model) && (!nsfwModelLoaded || !nsfwModel)) {
+    console.error("[OFFSCREEN] No models loaded");
+    return { is_sensitive: false, error: "No models loaded" };
   }
 
   try {
     const img = await loadImage(imageData);
     console.log(`[OFFSCREEN] Image loaded, dimensions: ${img.width}x${img.height}, data length: ${imageData.length}`);
 
+    // First try NSFW.js if available
+    if (nsfwModelLoaded && nsfwModel) {
+      try {
+        console.log("[OFFSCREEN] Running NSFW.js model classification");
+        const nsfwPredictions = await nsfwModel.classify(img);
+        console.log("[OFFSCREEN] NSFW model predictions:", nsfwPredictions);
+        
+        // Check for NSFW content (Porn and Sexy categories)
+        const pornPrediction = nsfwPredictions.find(p => p.className === "Porn");
+        const sexyPrediction = nsfwPredictions.find(p => p.className === "Sexy");
+        
+        const pornScore = pornPrediction ? pornPrediction.probability : 0;
+        const sexyScore = sexyPrediction ? sexyPrediction.probability : 0;
+        const nsfwThreshold = 0.5; // Adjust this threshold as needed
+        
+        // If NSFW content detected with confidence above threshold
+        if (pornScore > nsfwThreshold || sexyScore > nsfwThreshold) {
+          console.log(`[OFFSCREEN] NSFW content detected: Porn: ${pornScore.toFixed(2)}, Sexy: ${sexyScore.toFixed(2)}`);
+          
+          // Return NSFW result
+          return {
+            is_sensitive: true,
+            confidence: Math.max(pornScore, sexyScore),
+            detected_categories: ["sexual"],
+            source: "nsfw_model",
+            top_predictions: nsfwPredictions.map(p => ({
+              class_name: p.className,
+              probability: p.probability
+            }))
+          };
+        }
+        
+        console.log("[OFFSCREEN] No NSFW content detected, proceeding with MobileNet model");
+      } catch (nsfwError) {
+        console.error("[OFFSCREEN] Error in NSFW model processing:", nsfwError);
+        // Continue to MobileNet if NSFW model fails
+      }
+    }
+
+    // If NSFW model didn't detect anything or isn't available, continue with MobileNet
+    if (!modelLoaded || !model) {
+      console.error("[OFFSCREEN] MobileNet model not loaded");
+      return { is_sensitive: false, error: "MobileNet model not loaded" };
+    }
+
+    // Rest of your existing MobileNet code
     const tensor = tf.tidy(() => {
       const imageTensor = tf.browser.fromPixels(img, 3);
       console.log(`[OFFSCREEN] Raw tensor shape: ${imageTensor.shape}, dtype: ${imageTensor.dtype}, min: ${tf.min(imageTensor).dataSync()[0]}, max: ${tf.max(imageTensor).dataSync()[0]}`);
@@ -317,6 +379,7 @@ async function processImage(imageData, threshold = 0.5) {
       is_sensitive: detectedCategories.length > 0,
       confidence: highestConfidence,
       detected_categories: detectedCategories,
+      source: "mobilenet",
       top_predictions: adjustedTopK.slice(0, 3).map(p => ({
         class_id: p.index,
         probability: p.value,

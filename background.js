@@ -189,7 +189,7 @@ async function processTestImage(imagePath) {
     
     // Process the image
     console.log(`[BACKGROUND] 🧪 TEST: Image loaded, size: ${Math.round(blob.size/1024)}KB`);
-    const result = await processImageInOffscreen(dataUrl, 0.15);
+    const result = await processImageInOffscreen(dataUrl, 0.5);
     
     // Log detailed results
     console.log(`[BACKGROUND] 🧪 TEST: Results:`, result);
@@ -372,7 +372,7 @@ async function processImageInOffscreen(imageData, threshold) {
     const response = await sendMessageToOffscreen({
       action: 'processImage',
       imageData: imageData,
-      threshold: threshold || 0.15
+      threshold: threshold || 0.5
     }, 15000);
     
     console.log(`[BACKGROUND] 📊 Classification result:`, JSON.stringify(response.result));
